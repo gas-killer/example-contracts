@@ -1,1 +1,234 @@
-# example-contracts
+# Gas Killer — Example Contracts
+
+Example [Foundry](https://book.getfoundry.sh) contracts that show off the **Gas Killer SDK** — an
+EigenLayer AVS where operators run an expensive *state-changing* computation **off-chain**, BLS-sign
+the resulting storage diff, and submit it through `verifyAndUpdate`, which verifies a 66 % operator
+quorum and then applies the diff with raw `sstore` / `call` / `log`. The on-chain cost is signature
+verification + applying the diff — **not** the computation.
+
+The pitch: **write the dumb, brute-force, gas-explosive contract you'd never normally ship**, and let
+operators do the heavy lifting off-chain.
+
+> ⚠️ Experimental, unaudited example code. **Read [`SECURITY.md`](./SECURITY.md) first** — it explains
+> the (crypto-economic, no-fraud-proof) trust model and exactly where the block gas limit still bites.
+> These examples are deliberately honest about when Gas Killer is a real win and when it is not.
+
+## How it works
+
+```
+            NAIVE (today)                         GAS KILLER
+   ┌───────────────────────────┐      ┌────────────────────────────────────┐
+   │ every caller runs the      │      │ operator runs the expensive fn      │
+   │ expensive fn on-chain      │      │ OFF-CHAIN, gets the storage diff     │
+   │  → O(N) gas, blows past a  │      │  → BLS-signs it (66% quorum)         │
+   │    30M block at modest N   │      │  → verifyAndUpdate applies the diff  │
+   └───────────────────────────┘      │    (sstore/log) for ~250k + the diff │
+                                       └────────────────────────────────────┘
+```
+
+A consumer contract:
+
+1. inherits `GasKillerSDK` and wires the AVS + BLS checker in its constructor;
+2. marks the expensive state-changing function with the `trackState` modifier (the function body is the
+   *spec*; in production operators reproduce its result off-chain);
+3. operators submit the resulting `(StateUpdateType[], bytes[])` diff through `verifyAndUpdate`.
+
+## The three examples
+
+| Example | What it does | SDK features | Regime |
+|---|---|---|---|
+| [`OnchainLife`](./src/examples/onchain-life/OnchainLife.sol) | Conway's Game of Life on a 64×64 board, fully on-chain | packed-bitmap `STORE`, `LOG2` | **Cost-collapse** (compute ≫ diff) |
+| [`MegaDrop`](./src/examples/megadrop/MegaDrop.sol) | Bulk airdrop: mint to a whole list in one naive loop | mapping `STORE`, `Transfer` `LOG3` | Write-bound / structural |
+| [`OnchainLeaderboard`](./src/examples/onchain-leaderboard/OnchainLeaderboard.sol) | Fully sorted ranking, re-sorted on every submit | array + mapping `STORE`, `LOG2` | Write-bound / structural |
+| [`GuardedVault`](./src/examples/guarded-vault/GuardedVault.sol) | Vault that re-validates an expensive **global invariant** on every state transition — before it lands | mapping `STORE`, `LOG1`, invariant guard | **Cost-collapse** (O(N) check ≫ diff) |
+
+### Measured gas (this repo, `forge test`)
+
+Apply-diff figures use a mock BLS checker and so **exclude** the fixed ~250k real-verification cost
+(`BLS_VERIFY_FIXED_GAS`); it's constant in N. See [`SECURITY.md`](./SECURITY.md).
+
+**OnchainLife — the clean win (heavy compute → tiny flat diff):**
+
+| generations | naive on-chain | apply diff |
+|---|---|---|
+| 1 | ~16.9M | ~46k |
+| 2 | ~33.6M (**> 30M block**) | ~46k |
+| 8 | ~134M | **~46k (still flat!)** |
+
+**MegaDrop — write-bound (naive can't fit a block; apply beats Merkle claims):**
+
+| recipients | naive airdrop | apply / recipient | Merkle claim / user |
+|---|---|---|---|
+| 1000 | ~25.2M | ~31k | ~55k |
+| 1500 | ~38.1M (**> 30M block**) | ~31k | ~55k |
+
+**OnchainLeaderboard — write-bound (worst-case front insertion):**
+
+| board size | naive re-sort | apply full-board diff |
+|---|---|---|
+| 1000 | ~16.3M | — |
+| 1500 | ~24.5M | ~36.6M |
+| 2000 | ~32.6M (**> 30M block**) | — |
+
+**GuardedVault — invariant guard (a tiny 2-account settle):** the cost is the O(N) global invariant
+re-check, which a naive guarded vault would pay on every transaction. Gas Killer runs it off-chain.
+
+| depositors | naive settle (re-runs the O(N) guard) | apply diff |
+|---|---|---|
+| 3000 | ~14.0M | ~16k |
+| 8000 | ~37.2M (**> 30M block**) | **~16k (a >2,300× collapse)** |
+
+## Quickstart
+
+```bash
+# clone with submodules (the SDK pulls in the EigenLayer middleware tree)
+git clone --recurse-submodules <this repo>
+# or, after a plain clone:
+git submodule update --init --recursive
+
+forge build          # compiles against the real GasKillerSDK + EigenLayer middleware (solc 0.8.27)
+forge test           # 43 tests: unit, equivalence, verifyAndUpdate, benchmarks
+forge test --match-path 'test/examples/*.bench.t.sol' -vv   # see the gas numbers
+```
+
+Deploy a demo locally (auto-deploys a mock BLS checker if `SIG_CHECKER_ADDRESS` is unset):
+
+```bash
+anvil &
+forge script script/DeployOnchainLife.s.sol --rpc-url http://localhost:8545 --broadcast \
+  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+
+## Anatomy of an example
+
+```solidity
+contract MyExample is GasKillerSDK {
+    uint256 public result;                 // slot 0 (GasKillerSDK uses ERC-7201 namespaces)
+
+    constructor(address avs, address bls) {
+        _setAvsAddress(avs);
+        _setBlsSignatureChecker(bls);
+    }
+
+    function expensiveThing(/* ... */) external trackState {  // the naive spec
+        // ... gas-explosive logic that sets `result` ...
+    }
+}
+```
+
+An operator (mimicked in tests by [`OffchainPayloadBuilder`](./test/helpers/OffchainPayloadBuilder.sol))
+computes the result off-chain and builds the diff:
+
+```solidity
+bytes memory diff = OffchainPayloadBuilder.store(
+    OffchainPayloadBuilder.simpleSlot(0),   // slot of `result`
+    bytes32(computedResult)
+);
+// → verifyAndUpdate(msgHash, quorumNumbers, refBlock, diff, transitionIndex, selector, signature)
+```
+
+Every test proves **equivalence**: running the naive function and applying the operator's diff produce
+byte-identical storage (checked with `vm.load`) and identical logs (checked with `vm.recordLogs`).
+
+## Using the REAL Gas Killer analyzer (end-to-end)
+
+The Solidity tests build the diff in Solidity (`OffchainPayloadBuilder`) so CI stays fast. To prove the
+examples work with the **actual** off-chain engine, [`script/e2e/`](./script/e2e/) wires in the real
+[Gas Killer analyzer](https://github.com/BreadchainCoop/gas-killer-analyzer) via a thin wrapper
+([`tools/diff-extractor`](./tools/diff-extractor/)): it traces a real `settle` transaction on a local
+anvil and emits the exact `(StateUpdateType[], bytes[])` diff that `verifyAndUpdate` applies.
+
+```bash
+cd tools/diff-extractor && cargo build --release && cd -
+bash script/e2e/run-guarded-vault-e2e.sh
+```
+
+The operator simulates a `settle` on a sandbox vault, the analyzer extracts the diff, and it lands on a
+separate target vault via `verifyAndUpdate` — reproducing the settle exactly. The BLS signature is
+mocked (the full operator set can't run locally); the **diff is real**. See
+[`script/e2e/README.md`](./script/e2e/README.md).
+
+## Live on Sepolia testnet
+
+A real Gas Killer AVS stack is deployed on **Sepolia (chain 11155111)** — discovered on-chain via the
+live `ArraySummationFactory` (`0xf7ded769418ec1db4da3bd2d47ab72ce2296a032`), which records every consumer
+it deployed. The most complete stack:
+
+| Component | Address (Sepolia) |
+|---|---|
+| ArraySummation (live consumer; `currentSum` already computed) | `0x0cBf633E948E005d58a0B7623D4e14d5Ba015F52` |
+| AVS / ServiceManager | `0x2015983cDd409B1838F4C1cCa9085c946C5A9F81` |
+| BLSSignatureChecker | `0x22FfcFD8cCCb2e70dbd6FE1DAf951080595E02f2` |
+| RegistryCoordinator | `0x7aA89B1CBC571a1c6F7E6B262E06e614104Fb56d` |
+| StakeRegistry | `0xac89f540a78313aE126fd95cc9e1eb82503b824A` |
+
+Run the live integration tests (they fork Sepolia; they **skip** unless `SEPOLIA_RPC_URL` is set, so
+default `forge test` is unaffected):
+
+```bash
+SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com \
+  forge test --match-contract SepoliaLiveTest -vv
+```
+
+They read the live consumer and wire `GuardedVault` to the **real on-chain** `BLSSignatureChecker`,
+showing `verifyAndUpdate` is gated by it.
+
+**Full submission, wired to the real AVS.** [`script/live/`](./script/live/) assembles every
+`verifyAndUpdate` argument from the live EigenLayer registry (`OperatorStateRetriever` +
+`BLSApkRegistry`) — leaving only the operator BLS signature `(sigma, apkG2)`, which the AVS's existing
+operator set produces. `test/live/SepoliaSubmit.t.sol` proves this against the live chain: with a
+placeholder signature, the real checker accepts every assembled field and reverts **only** at
+`InvalidBLSSignature` (not `InvalidQuorumApkHash`). See the integration runbook in
+[`script/live/README.md`](./script/live/README.md) for how to plug in the signature and go live.
+
+To deploy an example wired to the real checker:
+
+```bash
+AVS_ADDRESS=0x2015983cDd409B1838F4C1cCa9085c946C5A9F81 \
+SIG_CHECKER_ADDRESS=0x22FfcFD8cCCb2e70dbd6FE1DAf951080595E02f2 \
+  forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
+```
+
+### Driving it via the hosted aggregator
+
+There **is** a hosted operator service: `POST https://testnet.gaskiller.xyz/trigger` (bearer auth) runs
+the whole pipeline for a deployed consumer — simulate the call, compute the diff, BLS-sign it, and
+submit `verifyAndUpdate`. The client [`script/live/gk-trigger.sh`](./script/live/gk-trigger.sh) wraps it:
+
+```bash
+GK_PASSWORD=<token> ./script/live/gk-trigger.sh \
+  0x0cBf633E948E005d58a0B7623D4e14d5Ba015F52 "sum(uint256[])" "[]" --watch
+```
+
+**Verified end-to-end live:** triggering the current served target with `sum([1,2,3])` produced a real
+signed `verifyAndUpdate` on Sepolia — `stateTransitionCount` 14 → 15, tx
+[`0x96fbbd…17e1d6`](https://eth-sepolia.blockscout.com/tx/0x96fbbdaab6e4aa695d0b7f4d2a9222af1e869c1c96725949f08583eda417e1d6),
+relayer `0x5DD2e7db86…`. The full API contract, the "always trigger the current ConfigMap target"
+gotcha, and the deploy-and-wire steps for our examples are in
+[`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md).
+
+## Finding storage slots
+
+The crux of building a diff is targeting the right slot. Never guess — read the layout and verify it:
+
+```bash
+forge inspect src/examples/megadrop/MegaDrop.sol:MegaDrop storage-layout
+```
+
+`OffchainPayloadBuilder` provides the slot math (`simpleSlot`, `mappingSlot`, `dynamicArraySlot`,
+`dynamicArrayLengthSlot`, bit-packing helpers), and its self-test round-trips each helper against real
+Solidity layout with `vm.store` / `vm.load`. In your own tests, verify a computed slot with
+`vm.load(addr, slot)` before trusting it.
+
+## Layout
+
+```
+src/examples/<name>/         the three example contracts
+test/helpers/                OffchainPayloadBuilder (slot math + payload), BenchmarkBase
+test/mocks/                  MockBLSSignatureChecker (passes/fails the 66% quorum; no crypto)
+test/exposed/                per-example subclasses exposing the diff applier for gas isolation
+test/examples/               *.t.sol (unit + equivalence + verifyAndUpdate) and *.bench.t.sol
+script/                      Deploy<Example>.s.sol + DeployMockBLS.s.sol
+script/e2e/                  real-analyzer end-to-end (run-guarded-vault-e2e.sh + SubmitDiff.s.sol)
+tools/diff-extractor/        Rust wrapper around the real Gas Killer analyzer (tx -> encoded diff)
+```
