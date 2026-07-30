@@ -62,6 +62,37 @@ contract OnchainLifeBench is LifeTestKit {
         assertLt(apply8, naive8 / 100, "apply-diff of an 8-gen result is >=100x cheaper than computing it");
     }
 
+    /// @notice The headline curve: sweep generations and show naive cost climbing linearly (blowing past
+    ///         a 30M block after one generation) while the apply cost stays pinned at a constant — the
+    ///         diff is always <=16 board words + the generation word + one LOG2, no matter how much
+    ///         compute produced it. This is the single clearest demonstration of the cost collapse, and
+    ///         the numbers it prints are the ones quoted in docs/GAS-REPORT.md.
+    function test_sweep_naiveGrowsApplyStaysFlat() public {
+        uint32[5] memory gens = [uint32(1), 2, 4, 8, 16];
+        uint256[16] memory seed = _randomSeed(42);
+        uint256 firstApply;
+
+        for (uint256 i = 0; i < gens.length; i++) {
+            OnchainLife a = new OnchainLife(avs, address(bls), seed);
+            uint256 naive = _gasOfStep(a, gens[i]);
+
+            OnchainLifeExposed e = new OnchainLifeExposed(avs, address(bls), seed);
+            uint256 applied = _gasOfApply(e, _buildLifeDiff(a));
+            uint256 prod = applied + BLS_VERIFY_FIXED_GAS;
+
+            emit log_named_uint("generations              ", gens[i]);
+            emit log_named_uint("  naive gas              ", naive);
+            emit log_named_uint("  apply-diff gas         ", applied);
+            emit log_named_uint("  apply + BLS (prod est) ", prod);
+            emit log_named_uint("  savings factor (naive/prod)", naive / prod);
+
+            if (i == 0) firstApply = applied;
+            // The whole point: apply cost does not grow with the compute that produced the diff.
+            assertApproxEqAbs(applied, firstApply, 5_000, "apply-diff must stay flat across generations");
+            assertLt(prod, naive, "Gas Killer must be cheaper than computing it on-chain");
+        }
+    }
+
     /// @notice Two generations of 64x64 Life already exceed a 30M mainnet block — proof this contract
     ///         is unshippable as written, yet trivial to drive via Gas Killer.
     function test_naive_exceedsMainnetBlockGas() public {

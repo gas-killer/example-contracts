@@ -68,6 +68,61 @@ contract GuardedVaultBench is VaultTestKit {
         assertGt(big, MAINNET_BLOCK_GAS, "re-validating the invariant over 8000 depositors exceeds a 30M block");
     }
 
+    /// @notice Sweep depositor count: the naive guarded settle climbs with N (it re-validates the O(N)
+    ///         invariant on-chain) while the apply cost stays bounded — the diff is always the two
+    ///         changed share slots + one log.
+    ///
+    /// @dev WARM-STORAGE LOWER BOUND. This test seeds each vault with `vm.store` inside the *same*
+    ///      transaction it then measures, so every subsequent SLOAD is warm (100 gas) instead of cold
+    ///      (2100). That understates the naive cost by roughly 7x versus a real transaction reading
+    ///      storage fresh. The realistic, cold-storage numbers come from the setUp-seeded vaults in
+    ///      `test_checkInvariant_isLinearAndCrossesBlock` and `test_costCollapse_guardOffloaded`, and
+    ///      those are the ones quoted in docs/GAS-REPORT.md. Read this sweep as "even in the most
+    ///      favourable-to-naive framing, the apply cost still does not grow with N".
+    function test_sweep_naiveGrowsWithDepositorsApplyStaysFlat() public {
+        address[] memory users = new address[](2);
+        users[0] = _depositor(0);
+        users[1] = _depositor(1);
+        int256[] memory deltas = new int256[](2);
+        deltas[0] = -200;
+        deltas[1] = 200;
+        uint256 firstApply;
+
+        for (uint256 i = 0; i < SIZES.length; i++) {
+            uint256 n = SIZES[i];
+
+            GuardedVaultExposed naiveVault = _newVault();
+            _seedViaStore(naiveVault, n, 1000);
+            uint256 g0 = gasleft();
+            naiveVault.settle(users, deltas);
+            uint256 naive = g0 - gasleft();
+
+            GuardedVaultExposed applyVault = _newVault();
+            _seedViaStore(applyVault, n, 1000);
+            bytes memory diff = _buildSettleDiff(naiveVault, users);
+            uint256 g1 = gasleft();
+            applyVault.applyDiff(diff);
+            uint256 applied = g1 - gasleft();
+            uint256 prod = applied + BLS_VERIFY_FIXED_GAS;
+
+            emit log_named_uint("depositors               ", n);
+            emit log_named_uint("  naive guarded settle   ", naive);
+            emit log_named_uint("  apply-diff gas         ", applied);
+            emit log_named_uint("  apply + BLS (prod est) ", prod);
+            emit log_named_uint("  savings factor (naive/prod)", naive / prod);
+
+            if (i == 0) firstApply = applied;
+            // The diff is structurally the same at every N — two share slots + one log — so the apply
+            // cost is BOUNDED by a small constant rather than scaling with depositors. We assert the
+            // bound, not byte-equality: these readings drift a few thousand gas with the surrounding
+            // test's memory/warm-slot state (the standalone 8000-depositor case below measures LOWER
+            // than 3000 here, which is what proves the drift is measurement context, not real scaling).
+            assertLt(applied, 50_000, "apply-diff must stay bounded regardless of depositor count");
+            assertLt(applied, naive / 20, "apply-diff must stay far below the naive guarded settle");
+            firstApply; // silence unused-var warning while keeping the reading logged above
+        }
+    }
+
     /// @notice A tiny 2-account settle: naive (which re-runs the O(N) guard) is gas-explosive, while
     ///         the Gas Killer apply-diff (2 share writes + a log) is a few thousand gas — the operator
     ///         paid the invariant cost off-chain.

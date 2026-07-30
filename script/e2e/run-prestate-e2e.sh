@@ -105,26 +105,32 @@ done
 [ -z "$VDIFF" ] && check "state identical: naive(A) == verifyAndUpdate(extracted-diff)(C)" OK || check "verifyAndUpdate state" FAIL "$VDIFF"
 
 ############################################################################
-echo; echo "######## CASE 2: MegaDrop.airdrop — mapping STOREs + Transfer LOG3 (the live-failed case) ########"
-MA=$(dep test/exposed/MegaDropExposed.sol:MegaDropExposed "$AVS" "$BLS" "Mega" "MEGA" 18)
-MB=$(dep test/exposed/MegaDropExposed.sol:MegaDropExposed "$AVS" "$BLS" "Mega" "MEGA" 18)
-CD=$(cast calldata "airdrop(address[],uint256[])" "[$A0,$A1,$A2]" "[1000,2500,7]")
-DIFF=$(extract_twice "$A0" "$MA" "$CD") && check "extract deterministic + non-empty (${#DIFF} chars)" OK || check "extract" FAIL "see above"
-NAIVE_TX=$(send "$MA" "airdrop(address[],uint256[])" "[$A0,$A1,$A2]" "[1000,2500,7]" | jq -r .transactionHash)
-APPLY_TX=$(send "$MB" "applyDiff(bytes)" "$DIFF" | jq -r .transactionHash)
+echo; echo "######## CASE 2: GuardedVault.settle — invariant-guarded rebalance (mapping STOREs + LOG) ########"
+GA=$(dep test/exposed/GuardedVaultExposed.sol:GuardedVaultExposed "$AVS" "$BLS" 5000)
+GB=$(dep test/exposed/GuardedVaultExposed.sol:GuardedVaultExposed "$AVS" "$BLS" 5000)
+for V in "$GA" "$GB"; do
+  for PK in "$PK0" 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+            0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a; do
+    cast send "$V" "deposit(uint256)" 1000 --rpc-url "$RPC" --private-key "$PK" >/dev/null
+  done
+done
+CD=$(cast calldata "settle(address[],int256[])" "[$A0,$A1]" "[-200,200]")
+DIFF=$(extract_twice "$A0" "$GA" "$CD") && check "extract deterministic + non-empty (${#DIFF} chars)" OK || check "extract" FAIL "see above"
+NAIVE_TX=$(send "$GA" "settle(address[],int256[])" "[$A0,$A1]" "[-200,200]" | jq -r .transactionHash)
+APPLY_TX=$(send "$GB" "applyDiff(bytes)" "$DIFF" | jq -r .transactionHash)
 [ "$(cast receipt "$APPLY_TX" --rpc-url "$RPC" --json | jq -r .status)" = "0x1" ] \
   && check "applyDiff(extracted hex) tx succeeded" OK || check "applyDiff tx" FAIL "reverted"
-BDIFF=""
+SHDIFF=""
 for acct in "$A0" "$A1" "$A2"; do
-  ba=$(cast call "$MA" "balanceOf(address)(uint256)" "$acct" --rpc-url "$RPC")
-  bb=$(cast call "$MB" "balanceOf(address)(uint256)" "$acct" --rpc-url "$RPC")
-  [ "$ba" = "$bb" ] || BDIFF="$BDIFF $acct(A=$ba B=$bb)"
+  sa=$(cast call "$GA" "shares(address)(uint256)" "$acct" --rpc-url "$RPC")
+  sb=$(cast call "$GB" "shares(address)(uint256)" "$acct" --rpc-url "$RPC")
+  [ "$sa" = "$sb" ] || SHDIFF="$SHDIFF $acct(A=$sa B=$sb)"
 done
-ta=$(cast call "$MA" "totalSupply()(uint256)" --rpc-url "$RPC"); tb=$(cast call "$MB" "totalSupply()(uint256)" --rpc-url "$RPC")
-[ "$ta" = "$tb" ] || BDIFF="$BDIFF totalSupply(A=$ta B=$tb)"
-[ -z "$BDIFF" ] && check "balances + totalSupply identical (raw STORE == real mint)" OK || check "balances" FAIL "$BDIFF"
-[ "$(logs_of "$MA" "$NAIVE_TX")" = "$(logs_of "$MB" "$APPLY_TX")" ] \
-  && check "events identical (3x Transfer LOG3 + AirdropApplied)" OK || check "events" FAIL "log mismatch"
+[ "$(cast call "$GA" 'shares(address)(uint256)' "$A0" --rpc-url "$RPC")" != "1000" ] \
+  && check "naive settle actually moved shares (non-vacuous)" OK || check "naive settle" FAIL "shares unchanged"
+[ -z "$SHDIFF" ] && check "shares identical: naive(A) == applied-extracted-diff(B)" OK || check "shares" FAIL "$SHDIFF"
+[ "$(logs_of "$GA" "$NAIVE_TX")" = "$(logs_of "$GB" "$APPLY_TX")" ] \
+  && check "events identical + in-order (Settled)" OK || check "events" FAIL "log mismatch"
 
 echo
 [ "$FAIL" = "0" ] && { echo "==> ✅ PRESTATE E2E PASSED: extracted hex, applied through the SDK, reproduces naive state + events"; exit 0; } \

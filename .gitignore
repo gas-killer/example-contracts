@@ -3,7 +3,9 @@ cache/
 out/
 broadcast/*/31337/
 broadcast/**/dry-run/
-docs/
+# `forge doc` output, but keep hand-written docs (GAS-REPORT, LIVE-INTEGRATION, ...)
+docs/*
+!docs/*.md
 
 # Env / secrets
 .env
