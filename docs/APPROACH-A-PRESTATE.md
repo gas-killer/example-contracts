@@ -8,8 +8,7 @@ heavy-compute tracked function this trace is enormous even when the resulting di
 
 | Tracked call | Diff size | structLog trace | Outcome on a real node |
 |---|---|---|---|
-| `MegaDrop.airdrop([r],[1000])` | 4 ops | small | fine |
-| `OnchainLeaderboard.submitScore` | 5 ops | small | fine |
+| `GuardedVault.settle([a,b],[-200,200])` | 3 ops | small | fine |
 | **`OnchainLife.step(1)`** | **3 ops** | **306 MB / 16.8M gas** | **`-32000 execution timeout`** — node refuses |
 
 The diff is 3 ops; the *trace* is what kills it. Any function whose value is "expensive compute → small
@@ -66,8 +65,8 @@ not eligible; `--call` forces the structLogs path. (`--auto` is the production-r
 
 ### A correctness bonus: net-zero touches
 
-`prestateTracer` reports the **net** diff. A slot written then restored to its original value (e.g.
-re-submitting an identical leaderboard entry) shows `pre == post` and is correctly **omitted**. The
+`prestateTracer` reports the **net** diff. A slot written then restored to its original value (e.g. a
+rebalance that nets out) shows `pre == post` and is correctly **omitted**. The
 structLog path emits redundant write-backs for the same case. So on the fast path the diff is not just
 cheaper to *produce* — it can be strictly **leaner to apply**, and never less correct.
 
@@ -101,7 +100,7 @@ across repeated runs, locally and against a live node.)
 |---|---|---|
 | Unit (16) | `tools/diff-extractor/src/main.rs` `#[cfg(test)]` | storage diffing (changed/zeroing/net-zero/empty/consumer-only); LOG0–4 mapping; delegatecall-transparent + STATICCALL/regular-CALL-excluded log collection; ordering by global index AND by `position` without an index; **classifier** (eligible vs fallback for regular CALL, CREATE, CALL-nested-in-delegatecall, cross-contract storage, balance-only); tracker-slot filter |
 | Hybrid e2e | `script/e2e/run-hybrid-e2e.sh` (+ `test/fixtures/HybridFixtures.sol`) | `--auto` dispatches correctly and the applied diff reproduces state + events in BOTH regimes: a DELEGATECALL consumer (fast-path) and a cross-contract CALL consumer (fallback, CALL-op replay reproducing **both** contracts), through `applyDiff` **and** `verifyAndUpdate`; a log/delegatecall-log/log consumer proving **event ordering**; `--prestate` **refuses** the cross-contract case |
-| Self-compute e2e | `script/e2e/run-prestate-e2e.sh` | the real extracted hex, applied via `applyDiff` + `verifyAndUpdate`, reproduces naive state + in-order events — OnchainLife (heavy) and MegaDrop (LOG3) |
+| Self-compute e2e | `script/e2e/run-prestate-e2e.sh` | the real extracted hex, applied via `applyDiff` + `verifyAndUpdate`, reproduces naive state + in-order events — OnchainLife (heavy compute) and GuardedVault (invariant-guarded settle) |
 | Equivalence | `tools/diff-extractor/test-prestate.sh` | fast-path net-equals the structLogs path on the live examples; block-pinned; byte-identical hex across runs; parser count-guard refuses vacuous matches |
 | Ground-truth | `test/live/PrestateOracle.t.sol` | the heavy-case storage **and** LOG2 equals what the EVM produces for naive `step(1)` |
 

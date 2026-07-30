@@ -18,7 +18,7 @@ abstract contract LifeTestKit is BenchmarkBase {
     uint256 internal constant GENERATION_SLOT = 16;
     bytes32 internal constant STEP_SIG = keccak256("GenerationStepped(uint256,bytes32)");
 
-    function setUp() public {
+    function setUp() public virtual {
         bls = _deployPassingBls();
     }
 

@@ -52,23 +52,26 @@ the tests themselves use a mock checker. See [`SECURITY.md`](./SECURITY.md).
 
 | generations | naive on-chain | Gas Killer (prod. est.) | factor |
 |---|---|---|---|
-| 1 | 16.9M | 296k | **57×** |
-| 2 | 33.6M (**> 30M block**) | 297k | **113×** |
-| 8 | 134.1M | 297k | **451×** |
-| 16 | 267.7M | 297k | **901×** |
+| 1 | 16.9M | 379k | **44×** |
+| 2 | 33.6M (**> 30M block**) | 379k | **89×** |
+| 8 | 134.1M | 379k | **354×** |
+| 16 | 267.7M | 379k | **706×** |
 
-Apply-diff moves only 46,386 → 46,896 across that entire range. Naive grows without bound, Gas Killer is
-flat, so the savings factor **doubles every time the work doubles**.
+The apply cost (128,915) does not move at all across that range — the board is 16 words however much
+compute produced it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every time the
+work doubles**.
 
 **GuardedVault — the O(N) invariant runs off-chain; the diff is always 2 slots + a log:**
 
 | depositors | naive guard | Gas Killer (prod. est.) | factor |
 |---|---|---|---|
-| 1,000 | 4.7M | 266k | 17.5× |
-| 3,000 | 14.0M | 266k | 52.6× |
-| 8,000 | 37.2M (**> 30M block**) | 266k | **140×** |
+| 1,000 | 4.7M | 271k | 17.2× |
+| 3,000 | 14.0M | 271k | 51.4× |
+| 8,000 | 37.2M (**> 30M block**) | 271k | **137×** |
 
-Break-even is ~57 depositors; past that the advantage compounds linearly.
+Break-even is ~58 depositors. **Caveat, stated up front:** this settle conserves total shares, so the
+invariant is reducible to an `O(K)` check over the touched accounts — cheaper than Gas Killer. GuardedVault
+illustrates the *pattern*; it pays off when the invariant is genuinely irreducible. See the report.
 
 > **The honest limit.** A bulk airdrop and a sorted leaderboard were also built here and **removed** after
 > measuring as *losses* (25.2M → 30.7M and 24.5M → 36.8M). Both write a diff proportional to the work, so
