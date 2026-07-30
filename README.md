@@ -33,50 +33,47 @@ A consumer contract:
    *spec*; in production operators reproduce its result off-chain);
 3. operators submit the resulting `(StateUpdateType[], bytes[])` diff through `verifyAndUpdate`.
 
-## The three examples
+## The two examples
 
-| Example | What it does | SDK features | Regime |
+Both share the one property Gas Killer actually rewards: **expensive computation that collapses to a
+small storage diff.** Cost scales with compute; settlement scales with bytes changed.
+
+| Example | What it does | SDK features |
+|---|---|---|
+| [`OnchainLife`](./src/examples/onchain-life/OnchainLife.sol) | Conway's Game of Life on a 64×64 board, fully on-chain. One generation costs 16.9M gas; two exceed a block. | packed-bitmap `STORE`, `LOG2` |
+| [`GuardedVault`](./src/examples/guarded-vault/GuardedVault.sol) | Vault that re-validates an expensive **global invariant** on every transition — proven off-chain *before* the state lands | mapping `STORE`, `LOG1`, invariant guard |
+
+### Measured gas → [**full report: `docs/GAS-REPORT.md`**](./docs/GAS-REPORT.md)
+
+Production figures add the fixed ~250k BLS-verification estimate (`BLS_VERIFY_FIXED_GAS`, constant in N);
+the tests themselves use a mock checker. See [`SECURITY.md`](./SECURITY.md).
+
+**OnchainLife — the apply cost does not move as compute explodes:**
+
+| generations | naive on-chain | Gas Killer (prod. est.) | factor |
 |---|---|---|---|
-| [`OnchainLife`](./src/examples/onchain-life/OnchainLife.sol) | Conway's Game of Life on a 64×64 board, fully on-chain | packed-bitmap `STORE`, `LOG2` | **Cost-collapse** (compute ≫ diff) |
-| [`MegaDrop`](./src/examples/megadrop/MegaDrop.sol) | Bulk airdrop: mint to a whole list in one naive loop | mapping `STORE`, `Transfer` `LOG3` | Write-bound / structural |
-| [`OnchainLeaderboard`](./src/examples/onchain-leaderboard/OnchainLeaderboard.sol) | Fully sorted ranking, re-sorted on every submit | array + mapping `STORE`, `LOG2` | Write-bound / structural |
-| [`GuardedVault`](./src/examples/guarded-vault/GuardedVault.sol) | Vault that re-validates an expensive **global invariant** on every state transition — before it lands | mapping `STORE`, `LOG1`, invariant guard | **Cost-collapse** (O(N) check ≫ diff) |
+| 1 | 16.9M | 296k | **57×** |
+| 2 | 33.6M (**> 30M block**) | 297k | **113×** |
+| 8 | 134.1M | 297k | **451×** |
+| 16 | 267.7M | 297k | **901×** |
 
-### Measured gas (this repo, `forge test`)
+Apply-diff moves only 46,386 → 46,896 across that entire range. Naive grows without bound, Gas Killer is
+flat, so the savings factor **doubles every time the work doubles**.
 
-Apply-diff figures use a mock BLS checker and so **exclude** the fixed ~250k real-verification cost
-(`BLS_VERIFY_FIXED_GAS`); it's constant in N. See [`SECURITY.md`](./SECURITY.md).
+**GuardedVault — the O(N) invariant runs off-chain; the diff is always 2 slots + a log:**
 
-**OnchainLife — the clean win (heavy compute → tiny flat diff):**
-
-| generations | naive on-chain | apply diff |
-|---|---|---|
-| 1 | ~16.9M | ~46k |
-| 2 | ~33.6M (**> 30M block**) | ~46k |
-| 8 | ~134M | **~46k (still flat!)** |
-
-**MegaDrop — write-bound (naive can't fit a block; apply beats Merkle claims):**
-
-| recipients | naive airdrop | apply / recipient | Merkle claim / user |
+| depositors | naive guard | Gas Killer (prod. est.) | factor |
 |---|---|---|---|
-| 1000 | ~25.2M | ~31k | ~55k |
-| 1500 | ~38.1M (**> 30M block**) | ~31k | ~55k |
+| 1,000 | 4.7M | 266k | 17.5× |
+| 3,000 | 14.0M | 266k | 52.6× |
+| 8,000 | 37.2M (**> 30M block**) | 266k | **140×** |
 
-**OnchainLeaderboard — write-bound (worst-case front insertion):**
+Break-even is ~57 depositors; past that the advantage compounds linearly.
 
-| board size | naive re-sort | apply full-board diff |
-|---|---|---|
-| 1000 | ~16.3M | — |
-| 1500 | ~24.5M | ~36.6M |
-| 2000 | ~32.6M (**> 30M block**) | — |
-
-**GuardedVault — invariant guard (a tiny 2-account settle):** the cost is the O(N) global invariant
-re-check, which a naive guarded vault would pay on every transaction. Gas Killer runs it off-chain.
-
-| depositors | naive settle (re-runs the O(N) guard) | apply diff |
-|---|---|---|
-| 3000 | ~14.0M | ~16k |
-| 8000 | ~37.2M (**> 30M block**) | **~16k (a >2,300× collapse)** |
+> **The honest limit.** A bulk airdrop and a sorted leaderboard were also built here and **removed** after
+> measuring as *losses* (25.2M → 30.7M and 24.5M → 36.8M). Both write a diff proportional to the work, so
+> there's no compute to collapse and you pay quorum overhead on top. If your diff scales with your
+> computation, this is the wrong tool.
 
 ## Quickstart
 
@@ -87,7 +84,7 @@ git clone --recurse-submodules <this repo>
 git submodule update --init --recursive
 
 forge build          # compiles against the real GasKillerSDK + EigenLayer middleware (solc 0.8.27)
-forge test           # 43 tests: unit, equivalence, verifyAndUpdate, benchmarks
+forge test           # unit, equivalence, verifyAndUpdate, canonical-encoding, benchmarks
 forge test --match-path 'test/examples/*.bench.t.sol' -vv   # see the gas numbers
 ```
 
@@ -222,7 +219,7 @@ are in [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md).
 The crux of building a diff is targeting the right slot. Never guess — read the layout and verify it:
 
 ```bash
-forge inspect src/examples/megadrop/MegaDrop.sol:MegaDrop storage-layout
+forge inspect src/examples/onchain-life/OnchainLife.sol:OnchainLife storage-layout
 ```
 
 `OffchainPayloadBuilder` provides the slot math (`simpleSlot`, `mappingSlot`, `dynamicArraySlot`,
@@ -233,7 +230,7 @@ Solidity layout with `vm.store` / `vm.load`. In your own tests, verify a compute
 ## Layout
 
 ```
-src/examples/<name>/         the three example contracts
+src/examples/<name>/         the two example contracts
 test/helpers/                OffchainPayloadBuilder (slot math + payload), BenchmarkBase
 test/mocks/                  MockBLSSignatureChecker (passes/fails the 66% quorum; no crypto)
 test/exposed/                per-example subclasses exposing the diff applier for gas isolation

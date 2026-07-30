@@ -16,9 +16,7 @@ EXT="$(cd "$(dirname "$0")" && pwd)/target/release/gk-diff-extractor"
 FROM=0xff467a85932cF543Df50255f00A8A829c12a3A11
 
 GUARDEDVAULT=0xa44724d3781575d26b1809817f1b4b73d6492b01
-LEADERBOARD=0x0f6208bdd8993bdeab6ed9c44a56216877650efc
 LIFE=0x01a8c90963ebe399872c63afe0c885a43c93fa9c
-MEGADROP=0xdcee59358d1eb0ec4df83d85d00cb79724823d50
 
 cmp_py() {
 python3 - "$1" "$2" <<'PY'
@@ -80,12 +78,9 @@ equivalence() {
 }
 
 echo "############ equivalence: --prestate vs --call (structLogs) ############"
-# Use genuinely state-CHANGING calls. NOTE the net-zero property: re-submitting an identical
-# (player,score) is a no-op, for which --prestate correctly emits an EMPTY diff while structLogs emits
-# redundant write-backs — i.e. prestate is strictly leaner (and cheaper to apply) on net-zero touches.
-NEWPLAYER=0x000000000000000000000000000000000000bEEF
-equivalence "MegaDrop.airdrop"          "$MEGADROP"    "airdrop(address[],uint256[])" "[$FROM]" "[1000]"
-equivalence "OnchainLeaderboard.submit" "$LEADERBOARD" "submitScore(address,uint256)" "$NEWPLAYER" 50
+# NOTE the net-zero property: a call that writes a slot then restores it is a no-op, for which
+# --prestate correctly emits an EMPTY diff while structLogs emits redundant write-backs — i.e. prestate
+# is strictly leaner (and cheaper to apply) on net-zero touches, never less correct.
 equivalence "GuardedVault.settle"       "$GUARDEDVAULT" "settle(address[],int256[])" "[]" "[]"
 
 echo

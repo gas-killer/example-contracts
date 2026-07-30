@@ -78,13 +78,15 @@ These examples deliberately cover both:
   check (shown by `test_guard_limitation_phantomOnNonDepositorEscapes`). Honest operators never build
   such a diff, but it is a reminder to design invariants to cover all reachable state.
 
-- **Write-bound / structural (compute ≈ diff).** `MegaDrop` (bulk airdrop) and `OnchainLeaderboard`
-  (sorted ranking) have O(N) diffs. Their naive loops cross a 30M block at ~1.2k and ~1.8k entries
-  respectively — so you can't ship them as one transaction — but applying the diff is *also* O(N) and is
-  **not** cheaper than the naive work (MegaDrop's apply is a bit *more* expensive due to per-op decode
-  overhead). Their value is structural: one attested batch instead of N user claim transactions, no
-  Merkle infrastructure, offloaded eligibility/ordering computation, and large updates chunked across
-  multiple `verifyAndUpdate` calls.
+- **Write-bound (compute ≈ diff) — where Gas Killer LOSES.** When the diff scales with the work, there is
+  no compute to collapse: you pay to write the same words *plus* the fixed quorum overhead. Two such
+  examples (a bulk airdrop and a sorted leaderboard) were built here and **removed** after measuring as
+  net losses — 25.2M naive → 30.7M via Gas Killer, and 24.5M → 36.8M respectively. Both naive loops do
+  cross a 30M block (at ~1.2k and ~1.8k entries), so they can't ship as one transaction either way, and
+  such designs can still have *structural* value — one attested batch instead of N user claim
+  transactions, no Merkle infrastructure, work chunked across multiple `verifyAndUpdate` calls. But they
+  are not a gas win, and this repo no longer presents them as one. If your diff scales with your
+  computation, Gas Killer is the wrong tool.
 
 ## Marketing vs. code
 
