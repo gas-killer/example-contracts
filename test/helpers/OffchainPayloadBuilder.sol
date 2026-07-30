@@ -10,8 +10,18 @@ import {StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 ///           1. **Payload assembly** — turn ops into the exact bytes `verifyAndUpdate` expects.
 ///           2. **Slot math** — compute the storage slot a value lives at, so a STORE op targets
 ///              the right location.
-/// @dev The arg encoders below mirror `StateChangeHandlerLib._runStateUpdates`' `abi.decode`
-///      order **byte-for-byte**. If the SDK changes a decode order, change it here too.
+/// @dev The arg encoders below mirror `StateChangeHandlerLib._runStateUpdates`' decode order
+///      **byte-for-byte**. If the SDK changes a decode order, change it here too.
+///
+///      LOG ARGS ARE NOW A STRICT WIRE FORMAT. Since the SDK's settlement hardening,
+///      `_runStateUpdates` no longer `abi.decode`s LOG args — it reads them in place, after calling
+///      `_validateLogArg`, which reverts `MalformedLogPayload` unless the arg is a **canonical**
+///      encoding: the leading `data` offset word must equal the head size `0x20 * (numTopics + 1)`
+///      (0x20 for LOG0 … 0xa0 for LOG4), and the declared `data` length must fit inside the arg.
+///      `abi.encode(data, topic1, …, topicN)` — data FIRST, then topics — produces exactly that, which
+///      is why the encoders below are written that way and why field order is not a free choice. A
+///      hand-rolled or reordered encoding that the older SDK tolerated now reverts on-chain.
+///      `test/CanonicalLogEncoding.t.sol` pins both directions (canonical accepted, malformed rejected).
 ///
 ///      FINDING THE RIGHT SLOT: never hardcode a slot by eyeballing the source. Read the exact
 ///      layout with `forge inspect <path>:<Contract> storage-layout` (immutables/constants take

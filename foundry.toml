@@ -13,6 +13,12 @@ via_ir = false
 optimizer = true
 optimizer_runs = 200
 
+# Pinned to match the SDK's own foundry.toml. The SDK's TransitionGuard is a hard
+# EIP-1153 (transient storage) dependency, available from Cancun onward. Pinning the
+# floor fork that satisfies it — rather than whatever newer fork Foundry defaults to
+# next — keeps codegen from assuming opcodes a settlement target may not have.
+evm_version = "cancun"
+
 # The "naive" example functions are deliberately gas-explosive: at large N they would
 # never fit in a real ~30M-gas mainnet block. We still need them to *execute* inside a
 # test so we can measure their gas and assert it exceeds the mainnet limit, so the

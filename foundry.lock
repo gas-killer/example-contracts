@@ -6,6 +6,6 @@
     }
   },
   "lib/solidity-sdk": {
-    "rev": "7e4289c"
+    "rev": "79d3716eac5aa38c01779e1e62bb03817727937a"
   }
 }
