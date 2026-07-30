@@ -22,7 +22,7 @@ operators do the heavy lifting off-chain.
    │ expensive fn on-chain      │      │ OFF-CHAIN, gets the storage diff     │
    │  → O(N) gas, blows past a  │      │  → BLS-signs it (66% quorum)         │
    │    30M block at modest N   │      │  → verifyAndUpdate applies the diff  │
-   └───────────────────────────┘      │    (sstore/log) for ~250k + the diff │
+   └───────────────────────────┘      │    (sstore/log) for ~225k + the diff │
                                        └────────────────────────────────────┘
 ```
 
