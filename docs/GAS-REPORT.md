@@ -6,8 +6,11 @@ realise costs more than a block, and abandon. Gas Killer makes them shippable.
 The mechanism in one line: **an operator quorum runs the expensive function off-chain, and submits only the
 resulting storage diff.** The chain pays to *apply a result*, never to *compute it*.
 
-Every number below is measured — `forge test --match-path 'test/examples/*.bench.t.sol' -vv`, SDK `79d3716`.
-Read [Methodology & caveats](#methodology--caveats) before quoting them.
+Every number below is measured on SDK `79d3716`. Naive figures come from
+`forge test --match-path 'test/examples/*.bench.t.sol' -vv`; apply figures come from
+`forge test --match-contract ColdApplyMeasure -vv`, which measures against production-shaped storage.
+**Read [Methodology & caveats](#methodology--caveats) before quoting any of them** — caveat 3 in
+particular explains why the two commands disagree by 2.8×.
 
 ---
 
@@ -34,15 +37,15 @@ generation counter plus one log. Compute explodes; the diff doesn't move. That g
 
 | Generations | Naive on-chain | Apply diff | Gas Killer (prod. est.) | Saving | Factor |
 |---:|---:|---:|---:|---:|---:|
-| 1  | 16,862,218  | 46,386 | 296,386 | 16.6M  | **57×** |
-| 2  | 33,632,923  | 46,514 | 296,514 | 33.3M  | **113×** |
-| 4  | 67,159,671  | 46,642 | 296,642 | 66.9M  | **226×** |
-| 8  | 134,102,442 | 46,769 | 296,769 | 133.8M | **451×** |
-| 16 | 267,694,767 | 46,896 | 296,896 | 267.4M | **901×** |
+| 1  | 16,862,218  | 128,915 | 378,915 | 16.5M  | **44×** |
+| 2  | 33,632,923  | 128,915 | 378,915 | 33.3M  | **89×** |
+| 4  | 67,159,671  | 128,915 | 378,915 | 66.8M  | **177×** |
+| 8  | 134,102,442 | 128,915 | 378,915 | 133.7M | **354×** |
+| 16 | 267,694,767 | 128,915 | 378,915 | 267.3M | **706×** |
 
-Look at the apply column: **46,386 → 46,896 across a 16× increase in compute.** That's +510 gas total, and
-it's just the generation counter holding a bigger number. The cost of settling 16 generations is
-indistinguishable from settling 1.
+The apply column is the point: it **does not move at all** as compute grows 16×. The board is 16 words
+whether the operator ran one generation or sixteen, so settling 16 generations costs the same as settling
+one.
 
 Naive grows linearly and forever. Gas Killer is **flat**. So the savings factor isn't a fixed discount —
 it *doubles every time you double the work*, without limit.
@@ -50,7 +53,7 @@ it *doubles every time you double the work*, without limit.
 ### The part that isn't about money
 
 At 2 generations the naive path stops being expensive and starts being **impossible** — it cannot fit in a
-block at any price. Gas Killer settles 16 generations for ~297k gas, comfortably inside one. The win isn't
+block at any price. Gas Killer settles 16 generations for ~379k gas, comfortably inside one. The win isn't
 "cheaper", it's "possible at all".
 
 ---
@@ -95,22 +98,40 @@ At 8,000 depositors — a settle moving 200 shares between two accounts:
 | | Gas |
 |---|---:|
 | Naive guarded settle | **37,241,269** (doesn't fit in a block) |
-| Apply diff | 15,517 |
-| **Gas Killer (prod. est.)** | **265,517** |
-| **Saving** | **36,975,752 — 140×** |
+| Apply diff | 21,396 |
+| **Gas Killer (prod. est.)** | **271,396** |
+| **Saving** | **36,969,873 — 137×** |
 
 Because the diff is always "two share slots + one log", the apply cost is **independent of depositor
 count**, while the naive cost scales linearly:
 
-| Depositors | Naive guard | Gas Killer | Factor |
+| Depositors | Naive guard | Gas Killer (prod. est.) | Factor |
 |---:|---:|---:|---:|
-| 1,000 | 4,658,626 | 265,517 | 17.5× |
-| 2,000 | 9,307,620 | 265,517 | 35.1× |
-| 3,000 | 13,956,620 | 265,517 | 52.6× |
-| 8,000 | 37,201,620 | 265,517 | **140.1×** |
+| 1,000 | 4,658,626 | 271,396 | 17.2× |
+| 2,000 | 9,307,620 | 271,396 | 34.3× |
+| 3,000 | 13,956,620 | 271,396 | 51.4× |
+| 8,000 | 37,201,620 | 271,396 | **137.1×** |
 
-**Break-even is ~57 depositors.** Below that the ~265k fixed quorum cost dominates and you should just do it
-on-chain. Above it, the advantage compounds linearly and never stops.
+**Break-even is ~58 depositors.** Below that the fixed quorum cost dominates and you should just do it
+on-chain. Above it, the advantage compounds linearly.
+
+### The baseline objection — stated before you raise it
+
+A sharp reader will notice that `settle` already reverts unless the deltas net to zero. `totalShares` is
+therefore unchanged, so the concentration `cap` is unchanged, conservation holds by construction, and the
+solvency check is O(1). It follows that **only the accounts the settle touched can newly breach the cap** —
+so this particular invariant is reducible to an `O(K)` check over the K touched accounts, costing on the
+order of tens of thousands of gas. That is **cheaper than routing it through Gas Killer.**
+
+So the 137× above is measured against a deliberately naive baseline, and we are not going to pretend
+otherwise. What GuardedVault actually demonstrates is the **pattern** — settle only what an operator has
+already proven, and keep the proof off-chain — not that this specific invariant needs it.
+
+The pattern pays when the invariant is *genuinely irreducible*: it depends on global state a settle can
+change (so the cap moves), or on an aggregate with no incremental form (top-k concentration, a sort, a
+graph traversal, a risk model over all positions). If your invariant can be maintained incrementally,
+write the `O(K)` version — it will beat this. Treat the GuardedVault numbers as an illustration of the
+mechanism's shape, and substitute your own invariant's real cost before drawing a conclusion.
 
 ---
 
@@ -120,7 +141,8 @@ Both winners share one property:
 
 > **Expensive computation that collapses to a small storage diff.**
 
-Life: millions of gas of neighbour-counting → 16 words. GuardedVault: an O(N) invariant sweep → 2 slots.
+Life: millions of gas of neighbour-counting → 16 words. GuardedVault: an O(N) invariant sweep → 2 slots
+(with the baseline caveat above).
 Cost scales with *compute*; settlement scales with *bytes changed*. Gas Killer arbitrages that gap.
 
 The corollary is the honest limit, and it's worth stating plainly. Two other examples were built and
@@ -158,10 +180,15 @@ Stated plainly, because the headline numbers depend on them.
    numbers but never the shape of the curves.
 2. **Not measured against the live hosted service.** These are local runs against the real SDK and real
    analyzer with a mocked quorum. Real operator signature verification is not included.
-3. **Cold vs warm storage matters enormously.** All figures quoted here use vaults seeded in `setUp` — a
-   separate transaction — so reads are cold (2,100 gas), matching a real transaction. Seeding in the same
-   transaction makes reads warm (100 gas) and *understates* naive cost by ~7×. The warm-seeded sweep in
-   `GuardedVault.bench.t.sol` is labelled as a lower bound for that reason.
+3. **Storage pricing — read this one carefully.** Under EIP-2200/2929 a slot whose value was zero at the
+   *start of the transaction* is a "dirty" slot and costs 100 gas to write, versus 5,000 for overwriting a
+   committed non-zero word. The `.bench.t.sol` suites deploy the apply target inside the transaction they
+   measure, which takes that discount and **understates apply cost by 2.8×** (OnchainLife: 45,915 measured
+   in-transaction vs **128,915** production-shaped). The apply/Gas Killer/Saving/Factor figures quoted
+   above are the **production-shaped** ones, measured against a target deployed in a prior transaction —
+   see `test/ColdApplyMeasure.t.sol`, which pins both numbers side by side. The naive columns come from
+   `setUp`-seeded (cold) vaults; the in-transaction warm sweep in `GuardedVault.bench.t.sol` is labelled a
+   lower bound for the same reason.
 4. **Gas is measured with `gasleft()` deltas**, not snapshot cheatcodes, which proved unreliable here.
 5. **The trust model is crypto-economic.** There is no on-chain re-execution, no fraud proof, and no
    slashing. Correctness rests on the honest-supermajority quorum. See [`SECURITY.md`](../SECURITY.md) —
