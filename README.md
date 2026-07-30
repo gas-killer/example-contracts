@@ -45,33 +45,35 @@ small storage diff.** Cost scales with compute; settlement scales with bytes cha
 
 ### Measured gas → [**full report: `docs/GAS-REPORT.md`**](./docs/GAS-REPORT.md)
 
-Production figures add the fixed ~250k BLS-verification estimate (`BLS_VERIFY_FIXED_GAS`, constant in N);
-the tests themselves use a mock checker. See [`SECURITY.md`](./SECURITY.md).
+Settlement cost is anchored in a **real Sepolia transaction**: our GuardedVault settled for **300,944 gas**
+([`0x865bf3ab…`](https://eth-sepolia.blockscout.com/tx/0x865bf3ab1d23566bce98261c1096822fb9a7ff8a52fbd07da9b5e804ec17fb7c)),
+of which **224,827 is BLS signature verification** — measured by tracing it, not estimated. That cost is
+fixed regardless of how much compute the operators did. See [`SECURITY.md`](./SECURITY.md).
 
 **OnchainLife — the apply cost does not move as compute explodes:**
 
-| generations | naive on-chain | Gas Killer (prod. est.) | factor |
+| generations | naive on-chain | Gas Killer settlement | factor |
 |---|---|---|---|
-| 1 | 16.9M | 379k | **44×** |
-| 2 | 33.6M (**> 30M block**) | 379k | **89×** |
-| 8 | 134.1M | 379k | **354×** |
-| 16 | 267.7M | 379k | **706×** |
+| 1 | 16.9M | ~400k | **42×** |
+| 2 | 33.6M (**> 30M block**) | ~400k | **84×** |
+| 8 | 134.1M | ~400k | **335×** |
+| 16 | 267.7M | ~400k | **669×** |
 
-The apply cost (128,915) does not move at all across that range — the board is 16 words however much
-compute produced it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every time the
-work doubles**.
+Settlement does not move at all across that range — the board is 16 words however much compute produced
+it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every time the work doubles**.
 
 **GuardedVault — the O(N) invariant runs off-chain; the diff is always 2 slots + a log:**
 
-| depositors | naive guard | Gas Killer (prod. est.) | factor |
+| depositors | naive guard | Gas Killer settlement | factor |
 |---|---|---|---|
-| 1,000 | 4.7M | 271k | 17.2× |
-| 3,000 | 14.0M | 271k | 51.4× |
-| 8,000 | 37.2M (**> 30M block**) | 271k | **137×** |
+| 1,000 | 4.7M | ~306k | 15.2× |
+| 3,000 | 14.0M | ~306k | 45.6× |
+| 8,000 | 37.2M (**> 30M block**) | ~306k | **122×** |
 
-Break-even is ~58 depositors. **Caveat, stated up front:** this settle conserves total shares, so the
-invariant is reducible to an `O(K)` check over the touched accounts — cheaper than Gas Killer. GuardedVault
-illustrates the *pattern*; it pays off when the invariant is genuinely irreducible. See the report.
+**Below ~66 depositors, don't use Gas Killer for this** — the ~300k settlement floor dominates and a plain
+on-chain check is cheaper. Two further caveats stated up front: this settle conserves total shares, so the
+invariant is reducible to an `O(K)` check over the touched accounts (also cheaper), and GuardedVault
+therefore illustrates the *pattern* rather than proving this invariant needs it. See the report.
 
 > **The honest limit.** A bulk airdrop and a sorted leaderboard were also built here and **removed** after
 > measuring as *losses* (25.2M → 30.7M and 24.5M → 36.8M). Both write a diff proportional to the work, so

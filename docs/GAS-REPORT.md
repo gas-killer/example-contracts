@@ -6,11 +6,20 @@ realise costs more than a block, and abandon. Gas Killer makes them shippable.
 The mechanism in one line: **an operator quorum runs the expensive function off-chain, and submits only the
 resulting storage diff.** The chain pays to *apply a result*, never to *compute it*.
 
-Every number below is measured on SDK `79d3716`. Naive figures come from
-`forge test --match-path 'test/examples/*.bench.t.sol' -vv`; apply figures come from
-`forge test --match-contract ColdApplyMeasure -vv`, which measures against production-shaped storage.
-**Read [Methodology & caveats](#methodology--caveats) before quoting any of them** — caveat 3 in
-particular explains why the two commands disagree by 2.8×.
+**The settlement cost is anchored in a real transaction, not a model.** One of these contracts has
+actually settled on Sepolia through the live operator quorum:
+
+> **[`0x865bf3ab…fb7c`](https://eth-sepolia.blockscout.com/tx/0x865bf3ab1d23566bce98261c1096822fb9a7ff8a52fbd07da9b5e804ec17fb7c)**
+> — a real `verifyAndUpdate` on our `GuardedVault`, **300,944 gas**, block 11130649. Tracing it
+> (`debug_traceTransaction`) splits that into **224,827 gas of BLS signature verification** and 76,117
+> for everything else (tx base, calldata, applying the diff, the transition counter).
+
+That **224,827** is the number that used to be a 250,000-gas guess. It is fixed — it does not care how
+much computation the operators did off-chain — which is the whole reason the economics work.
+
+Naive figures come from `forge test --match-path 'test/examples/*.bench.t.sol' -vv`; diff-apply figures
+from `forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage), SDK `79d3716`.
+**Read [Methodology & caveats](#methodology--caveats) before quoting any of them.**
 
 ---
 
@@ -35,17 +44,21 @@ generation counter plus one log. Compute explodes; the diff doesn't move. That g
 
 ### The numbers
 
-| Generations | Naive on-chain | Apply diff | Gas Killer (prod. est.) | Saving | Factor |
-|---:|---:|---:|---:|---:|---:|
-| 1  | 16,862,218  | 128,915 | 378,915 | 16.5M  | **44×** |
-| 2  | 33,632,923  | 128,915 | 378,915 | 33.3M  | **89×** |
-| 4  | 67,159,671  | 128,915 | 378,915 | 66.8M  | **177×** |
-| 8  | 134,102,442 | 128,915 | 378,915 | 133.7M | **354×** |
-| 16 | 267,694,767 | 128,915 | 378,915 | 267.3M | **706×** |
+OnchainLife has not itself settled on-chain, so its settlement cost is *built up* from the measured
+pieces: real BLS verification (224,827) + tx base (21,000) + calldata (~20k) + its measured diff-apply
+(128,915) + the transition counter ≈ **~400,000 gas**.
 
-The apply column is the point: it **does not move at all** as compute grows 16×. The board is 16 words
-whether the operator ran one generation or sixteen, so settling 16 generations costs the same as settling
-one.
+| Generations | Naive on-chain | Gas Killer settlement | Saving | Factor |
+|---:|---:|---:|---:|---:|
+| 1  | 16,862,218  | ~400,000 | 16.5M  | **42×** |
+| 2  | 33,632,923  | ~400,000 | 33.2M  | **84×** |
+| 4  | 67,159,671  | ~400,000 | 66.8M  | **168×** |
+| 8  | 134,102,442 | ~400,000 | 133.7M | **335×** |
+| 16 | 267,694,767 | ~400,000 | 267.3M | **669×** |
+
+The settlement column is the point: it **does not move at all** as compute grows 16×. The board is 16
+words whether the operator ran one generation or sixteen, so settling 16 generations costs the same as
+settling one.
 
 Naive grows linearly and forever. Gas Killer is **flat**. So the savings factor isn't a fixed discount —
 it *doubles every time you double the work*, without limit.
@@ -53,7 +66,7 @@ it *doubles every time you double the work*, without limit.
 ### The part that isn't about money
 
 At 2 generations the naive path stops being expensive and starts being **impossible** — it cannot fit in a
-block at any price. Gas Killer settles 16 generations for ~379k gas, comfortably inside one. The win isn't
+block at any price. Gas Killer settles 16 generations for ~400k gas, comfortably inside one. The win isn't
 "cheaper", it's "possible at all".
 
 ---
@@ -98,22 +111,28 @@ At 8,000 depositors — a settle moving 200 shares between two accounts:
 | | Gas |
 |---|---:|
 | Naive guarded settle | **37,241,269** (doesn't fit in a block) |
-| Apply diff | 21,396 |
-| **Gas Killer (prod. est.)** | **271,396** |
-| **Saving** | **36,969,873 — 137×** |
+| **Gas Killer settlement (real, measured on Sepolia)** | **300,944** |
+| of which: BLS signature verification | 224,827 |
+| **Saving** | **36,940,325 — 124×** |
+
+That settlement figure is not modelled — it is the gas a real `verifyAndUpdate` for this contract
+actually burned on Sepolia. A 2-account settle writes one more slot than the landed transaction did,
+so budget ~306,000; the tables below use that.
 
 Because the diff is always "two share slots + one log", the apply cost is **independent of depositor
 count**, while the naive cost scales linearly:
 
-| Depositors | Naive guard | Gas Killer (prod. est.) | Factor |
+| Depositors | Naive guard | Gas Killer settlement | Factor |
 |---:|---:|---:|---:|
-| 1,000 | 4,658,626 | 271,396 | 17.2× |
-| 2,000 | 9,307,620 | 271,396 | 34.3× |
-| 3,000 | 13,956,620 | 271,396 | 51.4× |
-| 8,000 | 37,201,620 | 271,396 | **137.1×** |
+| 1,000 | 4,658,626 | ~306,000 | 15.2× |
+| 2,000 | 9,307,620 | ~306,000 | 30.4× |
+| 3,000 | 13,956,620 | ~306,000 | 45.6× |
+| 8,000 | 37,201,620 | ~306,000 | **121.6×** |
 
-**Break-even is ~58 depositors.** Below that the fixed quorum cost dominates and you should just do it
-on-chain. Above it, the advantage compounds linearly.
+**Below ~66 depositors, do not use Gas Killer for this.** The ~300k settlement floor — nearly all of it
+signature verification — dominates, and a plain on-chain check is cheaper. The mechanism only starts to
+make sense above that crossover, and the advantage then grows linearly with N. We would rather you learn
+that here than after integrating.
 
 ### The baseline objection — stated before you raise it
 
@@ -174,12 +193,15 @@ event streams match the naive execution exactly.
 
 Stated plainly, because the headline numbers depend on them.
 
-1. **`+250,000 gas` for BLS verification is an estimate, not a measurement.** The tests use a mock
-   signature checker that does no cryptography. It's a documented constant (`BLS_VERIFY_FIXED_GAS`) added to
-   every apply-diff figure to approximate production. It is **constant in N**, so it shifts the absolute
-   numbers but never the shape of the curves.
-2. **Not measured against the live hosted service.** These are local runs against the real SDK and real
-   analyzer with a mocked quorum. Real operator signature verification is not included.
+1. **Signature-verification cost is now measured, not estimated.** Earlier drafts added a 250,000-gas
+   guess. The figure used here, **224,827**, comes from tracing a real Sepolia `verifyAndUpdate`
+   (`0x865bf3ab…fb7c`) and reading the gas of the `BLSSignatureChecker` sub-call — the bulk of which is
+   the BN254 pairing precompile (113,000). The repo's test constant `BLS_VERIFY_FIXED_GAS = 250,000`
+   remains a deliberately conservative over-estimate for assertions.
+2. **One contract's settlement is real; the other's is derived.** GuardedVault's 300,944 is an actual
+   on-chain transaction. OnchainLife never settled on-chain (its 16.8M-gas simulation exceeded what the
+   operator's tracer could handle at the time), so its ~400,000 is built from measured parts and is
+   labelled as such wherever it appears. The Solidity tests themselves use a mock signature checker.
 3. **Storage pricing — read this one carefully.** Under EIP-2200/2929 a slot whose value was zero at the
    *start of the transaction* is a "dirty" slot and costs 100 gas to write, versus 5,000 for overwriting a
    committed non-zero word. The `.bench.t.sol` suites deploy the apply target inside the transaction they
