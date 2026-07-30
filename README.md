@@ -191,21 +191,31 @@ SIG_CHECKER_ADDRESS=0x22FfcFD8cCCb2e70dbd6FE1DAf951080595E02f2 \
 
 ### Driving it via the hosted aggregator
 
-There **is** a hosted operator service: `POST https://testnet.gaskiller.xyz/trigger` (bearer auth) runs
-the whole pipeline for a deployed consumer — simulate the call, compute the diff, BLS-sign it, and
-submit `verifyAndUpdate`. The client [`script/live/gk-trigger.sh`](./script/live/gk-trigger.sh) wraps it:
+There **is** a hosted operator service at `https://testnet.gaskiller.xyz`, which runs the whole
+pipeline for a deployed consumer: simulate the call, compute the diff, and have the operator quorum
+BLS-sign it. The client [`script/live/gk-trigger.sh`](./script/live/gk-trigger.sh) wraps it:
 
 ```bash
-GK_PASSWORD=<token> ./script/live/gk-trigger.sh \
-  0x0cBf633E948E005d58a0B7623D4e14d5Ba015F52 "sum(uint256[])" "[]" --watch
+GK_API_KEY=<your key> ./script/live/gk-trigger.sh \
+  0xa44724d3781575d26b1809817f1b4b73d6492b01 "settle(address[],int256[])" "[]" "[]" --watch
 ```
 
-**Verified end-to-end live:** triggering the current served target with `sum([1,2,3])` produced a real
-signed `verifyAndUpdate` on Sepolia — `stateTransitionCount` 14 → 15, tx
-[`0x96fbbd…17e1d6`](https://eth-sepolia.blockscout.com/tx/0x96fbbdaab6e4aa695d0b7f4d2a9222af1e869c1c96725949f08583eda417e1d6),
-relayer `0x5DD2e7db86…`. The full API contract, the "always trigger the current ConfigMap target"
-gotcha, and the deploy-and-wire steps for our examples are in
-[`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md).
+**Two upstream changes make older instructions wrong — both re-verified against the live service:**
+
+1. **Auth changed.** The shared `INGRESS_PASSWORD` bearer token is retired; ingress now takes a
+   per-client API key. The old token is rejected exactly like no credential at all
+   (`401 {"error":{"code":"UNAUTHORIZED"}}`), so you must ask the operators to mint you a key.
+2. **Submission changed.** The aggregator no longer broadcasts `verifyAndUpdate` for you. Upstream it
+   **renders a ready-to-sign payload** (`POST /tasks` → poll `GET /tasks/{id}` → `{to, data, value,
+   estimated_gas, valid_until_block}`) and **the caller submits it**, within roughly a 50-block
+   expiry. `gk-trigger.sh` implements that flow (set `GK_SUBMIT_KEY` to auto-send) and falls back to
+   the deprecated `/trigger` alias when a deployment predates it.
+
+The hosted testnet is currently **mid-migration**: it already serves the new error envelope and the new
+per-key auth, but does not yet expose `/tasks`. It also remains **BLS**, not Schnorr. Earlier
+"`stateTransitionCount` 14 → 15" results in this repo were produced under the old broadcasting model and
+are not reproducible with the retired credential. The full API contract and the deploy-and-wire steps
+are in [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md).
 
 ## Finding storage slots
 
