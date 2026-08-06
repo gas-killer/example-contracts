@@ -1,0 +1,50 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+# The EigenLayer middleware that GasKillerSDK depends on pins solc 0.8.27, so that
+# is the effective floor for the whole project. Keep via_ir off: eigenlayer-contracts
+# is large and via_ir would balloon compile time for no benefit here.
+solc_version = "0.8.27"
+via_ir = false
+optimizer = true
+optimizer_runs = 200
+
+# Pinned to match the SDK's own foundry.toml. The SDK's TransitionGuard is a hard
+# EIP-1153 (transient storage) dependency, available from Cancun onward. Pinning the
+# floor fork that satisfies it — rather than whatever newer fork Foundry defaults to
+# next — keeps codegen from assuming opcodes a settlement target may not have.
+evm_version = "cancun"
+
+# The "naive" example functions are deliberately gas-explosive: at large N they would
+# never fit in a real ~30M-gas mainnet block. We still need them to *execute* inside a
+# test so we can measure their gas and assert it exceeds the mainnet limit, so the
+# Foundry per-call / per-block ceilings are raised far above 30M. The 30M figure we
+# assert against lives in BenchmarkBase as MAINNET_BLOCK_GAS, decoupled from these.
+gas_limit = "18446744073709551615"   # u64 max
+block_gas_limit = "1000000000000"    # 1e12
+memory_limit = 268435456             # 256 MiB; brute-force loops allocate big arrays
+
+fs_permissions = [{ access = "read", path = "./" }]
+ffi = false
+
+[profile.ci]
+optimizer = true
+optimizer_runs = 200
+
+# Mirror forge's default formatting (the upstream SDK has no [fmt] block and passes
+# `forge fmt --check` against defaults), so our files stay fmt-clean against the same checker.
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+quote_style = "double"
+number_underscore = "preserve"
+multiline_func_header = "attributes_first"
+sort_imports = false
+single_line_statement_blocks = "preserve"
+wrap_comments = false

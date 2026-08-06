@@ -1,0 +1,8 @@
+gas-killer-sdk/=lib/solidity-sdk/src/
+forge-std/=lib/forge-std/src/
+@eigenlayer-middleware/=lib/solidity-sdk/lib/eigenlayer-middleware/src/
+eigenlayer-contracts/=lib/solidity-sdk/lib/eigenlayer-middleware/lib/eigenlayer-contracts/
+@openzeppelin/=lib/solidity-sdk/lib/openzeppelin-contracts/
+@openzeppelin-upgradeable/=lib/solidity-sdk/lib/openzeppelin-contracts-upgradeable/
+@openzeppelin-upgrades/=lib/solidity-sdk/lib/eigenlayer-middleware/lib/openzeppelin-contracts-upgradeable/
+ds-test/=lib/forge-std/lib/ds-test/src/

@@ -1,0 +1,6 @@
+[submodule "lib/solidity-sdk"]
+	path = lib/solidity-sdk
+	url = https://github.com/gas-killer/solidity-sdk
+[submodule "lib/forge-std"]
+	path = lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
