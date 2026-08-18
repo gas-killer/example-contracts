@@ -247,6 +247,10 @@ its figure is built from measured parts: real BLS verification (224,827) + tx ba
 for the 1,376-byte payload and `verifyAndUpdate`'s other arguments (~12,000) + the measured
 production-shaped apply (41,119) + the transition counter (~5,000) ≈ **~305,000 gas**.
 
+On "six words": that is the *consumer's* contribution to the diff, and it is what the payload carries. The
+settlement transaction writes one slot more — the SDK's own `trackState` transition counter, in its
+ERC-7201 namespace — which is why the derivation above has a separate line for it.
+
 A never-committed oracle pays more for its *first* settlement — 144,021 to apply instead of 41,119 —
 because each of the six words takes the zero-to-non-zero `SSTORE` path once. Steady state is the figure
 above.
@@ -349,6 +353,15 @@ Stated plainly, because the headline numbers depend on them.
    built before either is applied, a 250-observation diff and a 2,000-observation diff cost **41,119 gas
    each, identical to the unit** (`test_applyCostIsIdenticalAcrossN`). Where this report quotes a flat
    apply cost, that test is the claim; the sweep tables show the noise.
-7. **The trust model is crypto-economic.** There is no on-chain re-execution, no fraud proof, and no
+7. **The above-block-limit rows need a simulation profile that is not the default.** Any figure here
+   whose *naive* cost exceeds ~30M — Quicksort at 209M on ordered input, the 36.1M `SortedOracle` commit,
+   OnchainLife past one generation — can only be analyzed under `GK_SIM_PROFILE=unbounded`. The default is
+   `GK_SIM_PROFILE=chain`, which simulates at the real block limit and cannot extract a diff from those
+   calls at all. `unbounded` additionally requires a cap-lifted `debug_traceCall` RPC, pairs with
+   `STATE_ENCODING=prestate-net`, is a coordinated fleet-wide flip (it changes the task digest), and has
+   three open preconditions tracked in `gas-killer/service#356` — including an SP1 guest that would
+   otherwise judge honest payloads invalid. Read these rows as what the mechanism buys once that profile
+   ships. See [`SECURITY.md`](../SECURITY.md#what-gk_sim_profileunbounded-actually-requires).
+8. **The trust model is crypto-economic.** There is no on-chain re-execution, no fraud proof, and no
    slashing. Correctness rests on the honest-supermajority quorum. See [`SECURITY.md`](../SECURITY.md) —
    for GuardedVault in particular, the invariant guarantee is only as good as the operator set.

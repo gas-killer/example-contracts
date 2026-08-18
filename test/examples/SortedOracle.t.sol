@@ -25,6 +25,9 @@ abstract contract SortedOracleTestKit is BenchmarkBase {
     bytes32 internal constant COMMITTED_SIG = keccak256("Committed(uint256,bytes32,uint256)");
 
     /// @notice Number of payload operations a commit produces, whatever N is: six stores and one log.
+    /// @dev Payload operations only. Applying it also bumps the SDK's `trackState` transition counter,
+    ///      which is a seventh storage write but is made by `verifyAndUpdate` itself, not carried in the
+    ///      payload — see `test_diff_leavesObservationsUntouched`, which allows exactly that slot.
     uint256 internal constant COMMIT_OPS = 7;
 
     function setUp() public virtual {
