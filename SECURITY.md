@@ -39,8 +39,35 @@ That is only partly true. There are three distinct boundaries:
 | Boundary | Bounded by the ~30M block limit? | Status today |
 |---|---|---|
 | On-chain re-execution for **objective slashing** | It *would* be (single-shot re-execution must fit a block; bisection could lift it) | **Not implemented** — there are no on-chain fraud proofs at all |
-| **Off-chain simulation** by operators | **Profile-dependent.** Under the default profile the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either. The analyzer also implements `SimProfile::Unbounded`, which simulates at `1 << 40` gas (~24,000× a block) and instead prices the *payload* against EIP-7825's 2^24 cap — see `gas-analyzer/docs/UNBOUNDED_MODE.md` | Which profile a given operator deployment runs is a deployment question; **verify before relying on it** |
+| **Off-chain simulation** by operators | **Yes under the default profile** (`GK_SIM_PROFILE=chain`): the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either. `GK_SIM_PROFILE=unbounded` lifts that to `1 << 40` gas (~24,000× a block) and instead prices the *payload* against EIP-7825's 2^24 cap — see `gas-analyzer/docs/UNBOUNDED_MODE.md` | `chain` is the default and **`unbounded` is explicitly not production-ready** — see the note below |
 | On-chain **diff application** | **Always** — applying *K* storage writes costs ≈ *K × 22k* gas plus a ~250k fixed floor, so a large diff must be chunked across multiple `verifyAndUpdate` calls | Hard, permanent |
+
+### What `GK_SIM_PROFILE=unbounded` actually requires
+
+Some numbers in [`docs/GAS-REPORT.md`](./docs/GAS-REPORT.md) describe functions that cost more than a
+block to execute directly — Quicksort at 209M gas on ordered input, a 36M-gas `SortedOracle` commit.
+**Those settle only under `GK_SIM_PROFILE=unbounded`, which is not the default and is not ready for a
+production fleet.** Stated plainly, from `service/example.env` and `service/common/src/config.rs`:
+
+- **The default is `chain`.** `SimProfile::default()` is `Chain` (pinned by a test), and the compose files
+  set `GK_SIM_PROFILE=${GK_SIM_PROFILE:-chain}`. Under it, the above-block-limit rows are not analyzable.
+- **The value is `unbounded`, not `unbounded-v1`.** The hyphenated form was the development-era spelling
+  and now **panics at startup** by design, rather than silently falling back to `chain` and forking the
+  quorum's task digest.
+- **It is a coordinated fleet-wide flip, not a rolling one.** The profile changes the derived
+  `storage_updates` and therefore the task digest, so it must be identical on every node *and* the router
+  or every signature fails to verify.
+- **It needs a cap-lifted RPC** (`anvil --disable-block-gas-limit`, or `geth --rpc.gascap=0`), or the heavy
+  call OOGs inside the tracer and extraction fails, and it should be paired with
+  `STATE_ENCODING=prestate-net`, because the struct-log encodings cost O(execution steps).
+- **Three preconditions are open**, tracked in `gas-killer/service#356`: (1) the SP1 fraud-proof guest must
+  bind the same lifted limits (`sp1-contract-call#12`) — a guest checking real header limits while
+  operators simulate under lifted ones would judge an honest payload invalid, i.e. **false slashing**;
+  (2) the payload gate's per-byte dispatch constant needs re-measuring against a real `verifyAndUpdate`
+  (`gas-analyzer#166`); (3) every operator's `debug_traceCall` RPC needs its execution cap lifted.
+
+So treat those rows as *what the mechanism will buy once that profile ships*, not as something today's
+default fleet will settle for you.
 
 The upshot: Gas Killer's clean win is **computation that collapses to a small diff** — heavy to compute,
 cheap to apply. When the diff is as large as the work (a flat airdrop, a full re-sort), the on-chain
@@ -103,11 +130,10 @@ These examples deliberately cover both:
 
 Gas Killer's landing page advertises "objective on-chain slashing" and "infinite computation? no
 problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@7e4289c`), the code backs
-**neither**: there is no on-chain slashing or fraud proof. The unbounded-computation claim is now
-partly backed — the analyzer implements a simulation profile at `1 << 40` gas — but it remains bounded
-by what a *payload* can carry, and whether a given operator deployment enables that profile is a
-separate question. Treat the unbounded-computation framing as the *trust-only* regime above, not as a
-verified guarantee.
+**neither**: there is no on-chain slashing or fraud proof, and the default simulation profile
+(`GK_SIM_PROFILE=chain`) stays within a block's gas. A `1 << 40`-gas profile exists but is opt-in, still
+bounded by what a *payload* can carry, and explicitly not production-ready — see the profile note above.
+Treat the unbounded-computation framing as the *trust-only* regime above, not as a verified guarantee.
 
 ## Benchmark honesty
 

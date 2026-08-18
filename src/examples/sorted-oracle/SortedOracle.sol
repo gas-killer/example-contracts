@@ -15,8 +15,10 @@ import {Quicksort} from "../algo/sort/Quicksort.sol";
 ///         six words: a commitment to the sorted order plus four order statistics and an epoch
 ///         counter. Both halves of its cost — the N storage reads and the O(N log N) (or O(N^2), see
 ///         below) sort — are invisible to a Gas Killer payload, which can only carry `STORE`,
-///         `LOG*`, `CALL` and `CREATE` operations. So the settled cost is six stores and one log
-///         *regardless of N*, while the on-chain cost grows without bound. Contrast the deleted
+///         `LOG*`, `CALL` and `CREATE` operations. So the payload is six stores and one log *regardless
+///         of N*, while the on-chain cost grows without bound. (The settlement transaction writes one
+///         further slot that is not part of the payload: the SDK's own `trackState` transition counter,
+///         which lives in an ERC-7201 namespace.) Contrast the deleted
 ///         leaderboard example, which sorted and then wrote the sorted array: there the diff grew
 ///         with the work and Gas Killer was a net loss.
 ///
