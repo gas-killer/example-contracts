@@ -39,7 +39,7 @@ That is only partly true. There are three distinct boundaries:
 | Boundary | Bounded by the ~30M block limit? | Status today |
 |---|---|---|
 | On-chain re-execution for **objective slashing** | It *would* be (single-shot re-execution must fit a block; bisection could lift it) | **Not implemented** — there are no on-chain fraud proofs at all |
-| **Off-chain simulation** by operators | Yes — the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either | Real constraint today |
+| **Off-chain simulation** by operators | **Profile-dependent.** Under the default profile the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either. The analyzer also implements `SimProfile::Unbounded`, which simulates at `1 << 40` gas (~24,000× a block) and instead prices the *payload* against EIP-7825's 2^24 cap — see `gas-analyzer/docs/UNBOUNDED_MODE.md` | Which profile a given operator deployment runs is a deployment question; **verify before relying on it** |
 | On-chain **diff application** | **Always** — applying *K* storage writes costs ≈ *K × 22k* gas plus a ~250k fixed floor, so a large diff must be chunked across multiple `verifyAndUpdate` calls | Hard, permanent |
 
 The upshot: Gas Killer's clean win is **computation that collapses to a small diff** — heavy to compute,
@@ -78,6 +78,14 @@ These examples deliberately cover both:
   check (shown by `test_guard_limitation_phantomOnNonDepositorEscapes`). Honest operators never build
   such a diff, but it is a reminder to design invariants to cover all reachable state.
 
+- **Pure compute (no diff at all).** `Quicksort` is `pure` — no storage, no logs, no calls — so it
+  contributes *nothing* to a payload and settles for zero at any N and any input. `SortedOracle` pairs it
+  with a six-word commit. This inherits the trust model above with no mitigation: nothing on-chain re-runs
+  the sort, so a quorum that commits a wrong median or a root of a badly-sorted array is not contradicted
+  by anything. Note precisely what `isCommittedOrder` does and does not buy you — it proves a witness
+  array matches what was committed, **not** that the committed array was correctly sorted or that it was
+  the true observation set. It binds the quorum to one answer; it does not make that answer verifiable.
+
 - **Write-bound (compute ≈ diff) — where Gas Killer LOSES.** When the diff scales with the work, there is
   no compute to collapse: you pay to write the same words *plus* the fixed quorum overhead. Two such
   examples (a bulk airdrop and a sorted leaderboard) were built here and **removed** after measuring as
@@ -86,14 +94,19 @@ These examples deliberately cover both:
   such designs can still have *structural* value — one attested batch instead of N user claim
   transactions, no Merkle infrastructure, work chunked across multiple `verifyAndUpdate` calls. But they
   are not a gas win, and this repo no longer presents them as one. If your diff scales with your
-  computation, Gas Killer is the wrong tool.
+  computation, Gas Killer is the wrong tool. The contrast with `SortedOracle` is the whole lesson: it runs
+  the same class of computation the deleted leaderboard did, but stores a commitment plus four order
+  statistics instead of the sorted array, so its diff is six words at any N. What you write decides the
+  verdict, not what you compute.
 
 ## Marketing vs. code
 
 Gas Killer's landing page advertises "objective on-chain slashing" and "infinite computation? no
 problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@7e4289c`), the code backs
-**neither**: there is no on-chain slashing or fraud proof, and the off-chain analyzer simulates within a
-block's gas. Treat the unbounded-computation framing as the *trust-only* regime above, not as a
+**neither**: there is no on-chain slashing or fraud proof. The unbounded-computation claim is now
+partly backed — the analyzer implements a simulation profile at `1 << 40` gas — but it remains bounded
+by what a *payload* can carry, and whether a given operator deployment enables that profile is a
+separate question. Treat the unbounded-computation framing as the *trust-only* regime above, not as a
 verified guarantee.
 
 ## Benchmark honesty
