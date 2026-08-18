@@ -33,15 +33,16 @@ A consumer contract:
    *spec*; in production operators reproduce its result off-chain);
 3. operators submit the resulting `(StateUpdateType[], bytes[])` diff through `verifyAndUpdate`.
 
-## The two examples
+## The three examples
 
-Both share the one property Gas Killer actually rewards: **expensive computation that collapses to a
+All share the one property Gas Killer actually rewards: **expensive computation that collapses to a
 small storage diff.** Cost scales with compute; settlement scales with bytes changed.
 
 | Example | What it does | SDK features |
 |---|---|---|
 | [`OnchainLife`](./src/examples/onchain-life/OnchainLife.sol) | Conway's Game of Life on a 64×64 board, fully on-chain. One generation costs 16.9M gas; two exceed a block. | packed-bitmap `STORE`, `LOG2` |
 | [`GuardedVault`](./src/examples/guarded-vault/GuardedVault.sol) | Vault that re-validates an expensive **global invariant** on every transition — proven off-chain *before* the state lands | mapping `STORE`, `LOG1`, invariant guard |
+| [`Quicksort`](./src/examples/algo/sort/Quicksort.sol) + [`SortedOracle`](./src/examples/sorted-oracle/SortedOracle.sol) | A `pure` sort that touches no storage at all, and the oracle that settles its result as six words. Ordered input drives it to O(N²) — 400 values exceed a block. | zero-op `pure` compute, 6× `STORE`, `LOG2`, commitment + calldata witness |
 
 ### Measured gas → [**full report: `docs/GAS-REPORT.md`**](./docs/GAS-REPORT.md)
 
@@ -70,6 +71,28 @@ it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every
 | 3,000 | 14.0M | ~306k | 45.6× |
 | 8,000 | 37.2M (**> 30M block**) | ~306k | **122×** |
 
+**Quicksort + SortedOracle — the compute doesn't just shrink in the diff, it disappears from it:**
+
+A Gas Killer payload carries only `STORE` / `LOG*` / `CALL` / `CREATE` ops, so a `pure` function
+contributes **zero** to settlement — not a small constant, zero, at every N. What settles is the
+consumer's six-word commit:
+
+| observations | naive commit | Gas Killer settlement | factor |
+|---|---|---|---|
+| 250 | 1.5M | ~305k | 5× |
+| 1,000 | 6.4M | ~305k | 22× |
+| 5,000 | 36.1M (**> 30M block**) | ~305k | 124× |
+
+The sharper number is about *input order*, not size. `Quicksort` uses a last-element pivot, so an
+already-ascending array degrades to O(N²) — and a steadily rising price feed produces exactly that. At
+N=400 the same commit costs **2.4M gas** in random order and **34.9M** in ascending order, which does not
+fit in a block. The settlement is byte-identical either way. On-chain, the algorithm's worst case is a
+denial-of-service surface reachable with ordinary data; off-chain it is a scheduling detail.
+
+**Below ~30 observations, don't use Gas Killer for this** — the settlement floor dominates. (For
+GuardedVault the same crossover sits at ~66 depositors; the sort's is earlier because its naive side is
+superlinear.)
+
 **Below ~66 depositors, don't use Gas Killer for this** — the ~300k settlement floor dominates and a plain
 on-chain check is cheaper. Two further caveats stated up front: this settle conserves total shares, so the
 invariant is reducible to an `O(K)` check over the touched accounts (also cheaper), and GuardedVault
@@ -79,6 +102,13 @@ therefore illustrates the *pattern* rather than proving this invariant needs it.
 > measuring as *losses* (25.2M → 30.7M and 24.5M → 36.8M). Both write a diff proportional to the work, so
 > there's no compute to collapse and you pay quorum overhead on top. If your diff scales with your
 > computation, this is the wrong tool.
+>
+> **And yes — a sorted leaderboard was removed, then a sort was added.** That is the lesson, not a
+> contradiction. `OnchainLeaderboard` *stored the sorted array*, so its diff was O(N) and Gas Killer made
+> it worse. `SortedOracle` runs the same class of computation and stores a **commitment** to the sorted
+> order plus four order statistics — six words, whatever N is. Identical algorithm, opposite verdict,
+> decided entirely by what you choose to write. If you need the full order on-chain, hand it back as a
+> calldata witness and check it against the commitment (`isCommittedOrder`) rather than storing it.
 
 ## Quickstart
 
@@ -235,7 +265,8 @@ Solidity layout with `vm.store` / `vm.load`. In your own tests, verify a compute
 ## Layout
 
 ```
-src/examples/<name>/         the two example contracts
+src/examples/<name>/         the example contracts
+src/examples/algo/<kind>/    reusable algorithm primitives (pure, no storage, no SDK)
 test/helpers/                OffchainPayloadBuilder (slot math + payload), BenchmarkBase
 test/mocks/                  MockBLSSignatureChecker (passes/fails the 66% quorum; no crypto)
 test/exposed/                per-example subclasses exposing the diff applier for gas isolation

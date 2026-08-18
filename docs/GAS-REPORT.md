@@ -1,6 +1,6 @@
 # Gas Killer — what it actually buys you
 
-Two example contracts, both deliberately "dumb expensive": the kind of thing you'd sketch on a whiteboard,
+Three worked examples, all deliberately "dumb expensive": the kind of thing you'd sketch on a whiteboard,
 realise costs more than a block, and abandon. Gas Killer makes them shippable.
 
 The mechanism in one line: **an operator quorum runs the expensive function off-chain, and submits only the
@@ -17,8 +17,9 @@ actually settled on Sepolia through the live operator quorum:
 That **224,827** is the number that used to be a 250,000-gas guess. It is fixed — it does not care how
 much computation the operators did off-chain — which is the whole reason the economics work.
 
-Naive figures come from `forge test --match-path 'test/examples/*.bench.t.sol' -vv`; diff-apply figures
-from `forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage), SDK `79d3716`.
+Naive figures come from `forge test --match-path 'test/**/*.bench.t.sol' -vv` (the `algo/` suites sit in a
+nested directory, so a single-level glob misses them); OnchainLife's diff-apply figure from
+`forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage), SDK `79d3716`.
 **Read [Methodology & caveats](#methodology--caveats) before quoting any of them.**
 
 ---
@@ -154,15 +155,137 @@ mechanism's shape, and substitute your own invariant's real cost before drawing 
 
 ---
 
+## 3. Quicksort + SortedOracle — pure computation, priced at zero
+
+### What it does
+
+[`Quicksort`](../src/examples/algo/sort/Quicksort.sol) is a `pure` in-memory quicksort: an iterative
+Lomuto implementation with an explicit stack and a last-element pivot. It touches no storage, emits no
+logs and makes no external calls. [`SortedOracle`](../src/examples/sorted-oracle/SortedOracle.sol) is
+the consumer that gives it something to settle: reporters push observations on-chain, and `commit()`
+reads all N back, sorts them, and writes **six words** — a commitment to the sorted order plus min,
+median, p95, max and an epoch counter — then emits one event.
+
+### Why you'd never ship it
+
+Two reasons, and the second is the interesting one.
+
+**Size.** Sorting is superlinear, so the cost runs away on its own. 8,000 random values cost **44.9M
+gas** to sort — before any storage is involved. Through `SortedOracle`, where each observation also
+costs a cold 2,100-gas `SLOAD` to read back, a commit stops fitting in a 30M block just past **4,000
+observations**.
+
+**Input order.** A last-element pivot degrades to O(N²) on input that is already ascending. That is not
+an exotic adversarial construction — *a steadily rising price feed produces it*. The same 400
+observations cost **2.4M gas** in random order and **34.9M** in ascending order: the second does not fit
+in a block. On-chain, that is a denial-of-service surface a reporter can trigger without submitting
+anything that looks anomalous. A production on-chain sort would need median-of-three and an
+insertion-sort cutoff purely to defend itself.
+
+### Why Gas Killer is the perfect fit
+
+This is the cleanest case in the repo, because the expensive part is not merely *small* in the diff —
+it is **absent** from it.
+
+A Gas Killer payload can carry only `STORE`, `LOG*`, `CALL` and `CREATE` operations, and the analyzer
+prices exactly those (`gas-analyzer/crates/core/src/heuristic.rs`). Memory traffic, arithmetic,
+comparisons and jumps have no representation in a payload at all. A pure algorithm therefore has a
+settlement cost of **zero** — not a small constant, zero. `test_settlementContributionIsZeroAtEveryN`
+asserts it directly: sorting 4,000 values burns ~21M gas on-chain and produces zero payload operations.
+
+So the pivot's worst case stops being a security problem and becomes a scheduling detail. The operator
+quorum absorbs 209M gas of work at N=1,000 on ordered input; the chain sees the same six-word diff it
+would have seen for random input, byte for byte.
+
+### The numbers
+
+**The pure sort — on-chain cost vs. settlement contribution:**
+
+| N | random input | ascending input | payload ops | settlement |
+|---:|---:|---:|---:|---:|
+| 250 | 823,893 | — | 0 | 0 |
+| 500 | 1,834,442 | 52,739,483 | 0 | 0 |
+| 1,000 | 4,023,329 | 209,737,475 | 0 | 0 |
+| 2,000 | 8,880,539 | — | 0 | 0 |
+| 4,000 | 20,950,162 | — | 0 | 0 |
+| 8,000 | 44,940,960 | — | 0 | 0 |
+
+Ascending input crosses a 30M block at **N=400** (33,850,939). Random input does not cross until somewhere
+between 4,000 and 8,000 — an order of magnitude larger N, from nothing but the order the data arrived in.
+
+**SortedOracle — the commit that settles it.** Observations are seeded in a prior transaction, so the
+naive column pays production-rate cold reads; the apply column is measured against a target that had
+already committed once, so its six words are overwrites rather than first-ever writes:
+
+| Observations | Naive commit | Apply diff | + BLS (est.) | Factor |
+|---:|---:|---:|---:|---:|
+| 250 | 1,504,581 | 41,288 | 291,288 | 5× |
+| 500 | 2,932,317 | 41,312 | 291,312 | 10× |
+| 1,000 | 6,426,141 | 41,337 | 291,337 | 22× |
+| 2,000 | 13,782,897 | 41,362 | 291,362 | 47× |
+| 4,000 | 29,284,997 | — | — | — |
+| 5,000 | 36,102,123 (**> 30M block**) | 41,286 | 291,286 | 124× |
+
+The 4,000-observation row is a naive-only measurement, included because it brackets the block limit from
+below; no apply was metered at that size.
+
+And the same table for input order rather than size, at a fixed N=400:
+
+| Input order | Naive commit | Apply diff |
+|---|---:|---:|
+| random | 2,396,231 | 41,310 |
+| ascending | 34,923,914 (**> 30M block**) | 41,119 |
+
+The apply column is the point. It does not move with N, and it does not move with how hard the sort
+was. `test_applyCostIsIdenticalAcrossN` pins the strong form of that claim: payloads built from a
+250-observation commit and a 2,000-observation commit apply for **41,119 gas each — identical to the
+unit**, not merely similar. The encoded payload is 1,376 bytes in every case, because every argument
+in it is fixed-width.
+
+**Production settlement, derived.** SortedOracle has not settled on-chain, so — as with OnchainLife —
+its figure is built from measured parts: real BLS verification (224,827) + tx base (21,000) + calldata
+for the 1,376-byte payload and `verifyAndUpdate`'s other arguments (~12,000) + the measured
+production-shaped apply (41,119) + the transition counter (~5,000) ≈ **~305,000 gas**.
+
+On "six words": that is the *consumer's* contribution to the diff, and it is what the payload carries. The
+settlement transaction writes one slot more — the SDK's own `trackState` transition counter, in its
+ERC-7201 namespace — which is why the derivation above has a separate line for it.
+
+A never-committed oracle pays more for its *first* settlement — 144,021 to apply instead of 41,119 —
+because each of the six words takes the zero-to-non-zero `SSTORE` path once. Steady state is the figure
+above.
+
+**Where the crossover is.** Measured against that ~305,000 floor, a plain on-chain commit is cheaper up
+to about **30 observations** (N=25 costs 289,702; N=50 costs 403,311). Above that the advantage grows
+superlinearly, because the naive side is superlinear and the settlement side is flat. This is a much
+earlier crossover than GuardedVault's ~66 depositors, for exactly that reason.
+
+### The part that isn't about money
+
+At N=400 with ordered input, and at N=5,000 with random input, the naive path stops being expensive and
+becomes impossible — it cannot fit in a block at any gas price. More pointedly, the *first* of those is
+reachable by ordinary well-behaved data. Gas Killer settles either one for ~305,000 gas, and the
+algorithm's worst case becomes something the operator set schedules around rather than something an
+attacker exploits.
+
+
+---
+
 ## Why this is the right shape of problem
 
-Both winners share one property:
+All three winners share one property:
 
 > **Expensive computation that collapses to a small storage diff.**
 
 Life: millions of gas of neighbour-counting → 16 words. GuardedVault: an O(N) invariant sweep → 2 slots
-(with the baseline caveat above).
+(with the baseline caveat above). SortedOracle: an O(N log N) sort — or O(N²) on ordered input — → 6 words.
 Cost scales with *compute*; settlement scales with *bytes changed*. Gas Killer arbitrages that gap.
+
+Quicksort sharpens the point to its limit. The other two examples collapse their computation into a *small*
+diff; a `pure` function collapses it into **no diff at all**. Nothing an algorithm does in memory can appear
+in a payload, so its settlement cost is not a small constant to be amortised — it is zero, at every N, for
+every input. That is the ceiling of what this mechanism buys, and it is worth knowing where the ceiling is
+before you design against it.
 
 The corollary is the honest limit, and it's worth stating plainly. Two other examples were built and
 **deliberately removed** from this repo because they measured as losses: a bulk airdrop (25.2M naive →
@@ -177,7 +300,7 @@ the savings are unbounded.
 
 ## Verification
 
-Correctness isn't assumed. For both examples the pipeline is proven end-to-end:
+Correctness isn't assumed. For OnchainLife and GuardedVault the pipeline is proven end-to-end:
 
 - The **real analyzer** extracts the diff from a live trace.
 - The extracted hex goes through the **real SDK** `verifyAndUpdate`.
@@ -186,6 +309,12 @@ Correctness isn't assumed. For both examples the pipeline is proven end-to-end:
 
 `script/e2e/run-prestate-e2e.sh` does exactly this on a local anvil for both contracts. On-chain state and
 event streams match the naive execution exactly.
+
+**SortedOracle has not been through that pipeline yet.** Its equivalence is proven in Solidity —
+`test_equivalence_naiveVsDiff` runs the naive `commit`, has the test harness build the diff, applies it to
+an identically-seeded instance through the real SDK `verifyAndUpdate`, and asserts every written slot
+(`vm.load`) and the emitted log match — but the diff is built by `OffchainPayloadBuilder`, not extracted
+from a real trace by the analyzer. Wiring it into `script/e2e/` is outstanding work.
 
 ---
 
@@ -204,14 +333,35 @@ Stated plainly, because the headline numbers depend on them.
    labelled as such wherever it appears. The Solidity tests themselves use a mock signature checker.
 3. **Storage pricing — read this one carefully.** Under EIP-2200/2929 a slot whose value was zero at the
    *start of the transaction* is a "dirty" slot and costs 100 gas to write, versus 5,000 for overwriting a
-   committed non-zero word. The `.bench.t.sol` suites deploy the apply target inside the transaction they
-   measure, which takes that discount and **understates apply cost by 2.8×** (OnchainLife: 45,915 measured
+   committed non-zero word. The OnchainLife and GuardedVault `.bench.t.sol` suites deploy the apply target
+   inside the transaction they measure, which takes that discount and **understates apply cost by 2.8×** (OnchainLife: 45,915 measured
    in-transaction vs **128,915** production-shaped). The apply/Gas Killer/Saving/Factor figures quoted
    above are the **production-shaped** ones, measured against a target deployed in a prior transaction —
    see `test/ColdApplyMeasure.t.sol`, which pins both numbers side by side. The naive columns come from
    `setUp`-seeded (cold) vaults; the in-transaction warm sweep in `GuardedVault.bench.t.sol` is labelled a
    lower bound for the same reason.
 4. **Gas is measured with `gasleft()` deltas**, not snapshot cheatcodes, which proved unreliable here.
-5. **The trust model is crypto-economic.** There is no on-chain re-execution, no fraud proof, and no
+5. **SortedOracle's naive column is cold; its apply column is steady-state.** Its observations are
+   seeded in `setUp` — a prior transaction — so `commit` pays the 2,100-gas cold `SLOAD` per observation
+   a live oracle pays. Seeding them inside the measured transaction would leave them warm at 100 gas and
+   understate the naive path by millions. Symmetrically, each apply measurement uses its own target that
+   was deployed *and* committed in `setUp`: applying two diffs to one target would make the second write
+   warm and dirty (100 gas instead of 5,000) and fake a flat curve out of a warmth artifact.
+6. **Two apply measurements taken in sequence differ by a couple of hundred gas.** Every external call in
+   a transaction allocates fresh memory to encode its calldata, so successive `gasleft()`-delta
+   measurements carry allocation noise in either direction. It does not scale with N — with both payloads
+   built before either is applied, a 250-observation diff and a 2,000-observation diff cost **41,119 gas
+   each, identical to the unit** (`test_applyCostIsIdenticalAcrossN`). Where this report quotes a flat
+   apply cost, that test is the claim; the sweep tables show the noise.
+7. **The above-block-limit rows need a simulation profile that is not the default.** Any figure here
+   whose *naive* cost exceeds ~30M — Quicksort at 209M on ordered input, the 36.1M `SortedOracle` commit,
+   OnchainLife past one generation — can only be analyzed under `GK_SIM_PROFILE=unbounded`. The default is
+   `GK_SIM_PROFILE=chain`, which simulates at the real block limit and cannot extract a diff from those
+   calls at all. `unbounded` additionally requires a cap-lifted `debug_traceCall` RPC, pairs with
+   `STATE_ENCODING=prestate-net`, is a coordinated fleet-wide flip (it changes the task digest), and has
+   three open preconditions tracked in `gas-killer/service#356` — including an SP1 guest that would
+   otherwise judge honest payloads invalid. Read these rows as what the mechanism buys once that profile
+   ships. See [`SECURITY.md`](../SECURITY.md#what-gk_sim_profileunbounded-actually-requires).
+8. **The trust model is crypto-economic.** There is no on-chain re-execution, no fraud proof, and no
    slashing. Correctness rests on the honest-supermajority quorum. See [`SECURITY.md`](../SECURITY.md) —
    for GuardedVault in particular, the invariant guarantee is only as good as the operator set.
