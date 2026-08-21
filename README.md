@@ -13,6 +13,12 @@ operators do the heavy lifting off-chain.
 > the (crypto-economic, no-fraud-proof) trust model and exactly where the block gas limit still bites.
 > These examples are deliberately honest about when Gas Killer is a real win and when it is not.
 
+> 📖 **Integrating the SDK into your own contract?** The guide is the
+> [Solidity Reference](https://gaskiller.xyz/docs/solidity/integrate) in the Gas Killer docs —
+> installation, the addresses to configure, `trackState` semantics, storage-layout rules, and a
+> revert-selector lookup table. This repo is its worked-examples companion, and defers to it rather
+> than restating it.
+
 ## How it works
 
 ```
@@ -152,17 +158,17 @@ mocked (the full operator set can't run locally); the **diff is real**. See
 
 ## Live on Sepolia testnet
 
-A real Gas Killer AVS stack is deployed on **Sepolia (chain 11155111)** — discovered on-chain via the
-live `ArraySummationFactory` (`0xf7ded769418ec1db4da3bd2d47ab72ce2296a032`), which records every consumer
-it deployed. The most complete stack:
+A real Gas Killer AVS stack is deployed on **Sepolia (chain 11155111)**.
 
-| Component | Address (Sepolia) |
-|---|---|
-| ArraySummation (live consumer; `currentSum` already computed) | `0x0cBf633E948E005d58a0B7623D4e14d5Ba015F52` |
-| AVS / ServiceManager | `0x2015983cDd409B1838F4C1cCa9085c946C5A9F81` |
-| BLSSignatureChecker | `0x22FfcFD8cCCb2e70dbd6FE1DAf951080595E02f2` |
-| RegistryCoordinator | `0x7aA89B1CBC571a1c6F7E6B262E06e614104Fb56d` |
-| StakeRegistry | `0xac89f540a78313aE126fd95cc9e1eb82503b824A` |
+**The addresses live in [Configuration](https://gaskiller.xyz/docs/solidity/configuration).** They
+belong to a particular AVS deployment rather than to this repo, and a target wired to a superseded
+`BLSSignatureChecker` produces payloads that cannot settle — so they are maintained in one place, with a
+`cast call` recipe there for checking a value is still current. Export them before running anything below:
+
+```bash
+export AVS_ADDRESS=...          # from the docs
+export SIG_CHECKER_ADDRESS=...  # from the docs
+```
 
 Run the live integration tests (they fork Sepolia; they **skip** unless `SEPOLIA_RPC_URL` is set, so
 default `forge test` is unaffected):
@@ -186,42 +192,37 @@ placeholder signature, the real checker accepts every assembled field and revert
 To deploy an example wired to the real checker:
 
 ```bash
-AVS_ADDRESS=0x2015983cDd409B1838F4C1cCa9085c946C5A9F81 \
-SIG_CHECKER_ADDRESS=0x22FfcFD8cCCb2e70dbd6FE1DAf951080595E02f2 \
-  forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
+forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
 ```
 
 ### Driving it via the hosted aggregator
 
-There **is** a hosted operator service at `https://testnet.gaskiller.xyz`, which runs the whole
-pipeline for a deployed consumer: simulate the call, compute the diff, and have the operator quorum
-BLS-sign it. The client [`script/live/gk-trigger.sh`](./script/live/gk-trigger.sh) wraps it:
+A hosted operator service at `https://testnet.gaskiller.xyz` runs the whole pipeline for a deployed
+consumer: simulate the call, compute the diff, and have the operator quorum BLS-sign it. It returns a
+ready-to-sign `verifyAndUpdate` transaction, which **you** submit.
+
+**The API contract is in the docs** — [Quickstart](https://gaskiller.xyz/docs/quickstart) for the
+submit/poll/settle flow, and the [API Reference](https://gaskiller.xyz/docs/api/tasks/submitTask) for
+every field, status code and error. Requests are authenticated with a per-client API key minted by the
+operators.
+
+The client [`script/live/gk-trigger.sh`](./script/live/gk-trigger.sh) wraps that flow for the examples
+in this repo:
 
 ```bash
 GK_API_KEY=<your key> ./script/live/gk-trigger.sh \
-  0xa44724d3781575d26b1809817f1b4b73d6492b01 "settle(address[],int256[])" "[]" "[]" --watch
+  $GUARDED_VAULT "settle(address[],int256[])" "[]" "[]" --watch
 ```
 
-**Two upstream changes make older instructions wrong — both re-verified against the live service:**
-
-1. **Auth changed.** The shared `INGRESS_PASSWORD` bearer token is retired; ingress now takes a
-   per-client API key. The old token is rejected exactly like no credential at all
-   (`401 {"error":{"code":"UNAUTHORIZED"}}`), so you must ask the operators to mint you a key.
-2. **Submission changed.** The aggregator no longer broadcasts `verifyAndUpdate` for you. Upstream it
-   **renders a ready-to-sign payload** (`POST /tasks` → poll `GET /tasks/{id}` → `{to, data, value,
-   estimated_gas, valid_until_block}`) and **the caller submits it**, within roughly a 50-block
-   expiry. `gk-trigger.sh` implements that flow (set `GK_SUBMIT_KEY` to auto-send) and falls back to
-   the deprecated `/trigger` alias when a deployment predates it.
-
-The hosted testnet is currently **mid-migration**: it already serves the new error envelope and the new
-per-key auth, but does not yet expose `/tasks`. It also remains **BLS**, not Schnorr. Earlier
-"`stateTransitionCount` 14 → 15" results in this repo were produced under the old broadcasting model and
-are not reproducible with the retired credential. The full API contract and the deploy-and-wire steps
-are in [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md).
+Set `GK_SUBMIT_KEY` to have it broadcast the rendered payload too; otherwise it prints the exact
+`cast send`. See [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md) for the client's env knobs and
+how the examples are wired.
 
 ## Finding storage slots
 
-The crux of building a diff is targeting the right slot. Never guess — read the layout and verify it:
+The crux of building a diff is targeting the right slot. Never guess — read the layout and verify it
+(see also [Tracked functions](https://gaskiller.xyz/docs/solidity/tracked-functions) on why layout is
+part of your interface with a signed payload):
 
 ```bash
 forge inspect src/examples/onchain-life/OnchainLife.sol:OnchainLife storage-layout
