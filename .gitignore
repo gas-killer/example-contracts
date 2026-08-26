@@ -5,7 +5,7 @@ out/
 # receipt from a --fork run is indistinguishable from a real one (it records the forked chain id),
 # so a committed one is a claim that cannot be checked.
 broadcast/
-# `forge doc` output, but keep hand-written docs (GAS-REPORT, LIVE-INTEGRATION, ...)
+# `forge doc` output, but keep hand-written docs (GAS-REPORT, ...)
 docs/*
 !docs/*.md
 
