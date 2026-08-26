@@ -39,8 +39,35 @@ That is only partly true. There are three distinct boundaries:
 | Boundary | Bounded by the ~30M block limit? | Status today |
 |---|---|---|
 | On-chain re-execution for **objective slashing** | It *would* be (single-shot re-execution must fit a block; bisection could lift it) | **Not implemented** — there are no on-chain fraud proofs at all |
-| **Off-chain simulation** by operators | Yes — the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either | Real constraint today |
+| **Off-chain simulation** by operators | **Yes under the default profile** (`GK_SIM_PROFILE=chain`): the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either. `GK_SIM_PROFILE=unbounded` lifts that to `1 << 40` gas (~24,000× a block) and instead prices the *payload* against EIP-7825's 2^24 cap — see `gas-analyzer/docs/UNBOUNDED_MODE.md` | `chain` is the default and **`unbounded` is explicitly not production-ready** — see the note below |
 | On-chain **diff application** | **Always** — applying *K* storage writes costs ≈ *K × 22k* gas plus a ~250k fixed floor, so a large diff must be chunked across multiple `verifyAndUpdate` calls | Hard, permanent |
+
+### What `GK_SIM_PROFILE=unbounded` actually requires
+
+Some numbers in [`docs/GAS-REPORT.md`](./docs/GAS-REPORT.md) describe functions that cost more than a
+block to execute directly — Quicksort at 209M gas on ordered input, a 36M-gas `SortedOracle` commit.
+**Those settle only under `GK_SIM_PROFILE=unbounded`, which is not the default and is not ready for a
+production fleet.** Stated plainly, from `service/example.env` and `service/common/src/config.rs`:
+
+- **The default is `chain`.** `SimProfile::default()` is `Chain` (pinned by a test), and the compose files
+  set `GK_SIM_PROFILE=${GK_SIM_PROFILE:-chain}`. Under it, the above-block-limit rows are not analyzable.
+- **The value is `unbounded`, not `unbounded-v1`.** The hyphenated form was the development-era spelling
+  and now **panics at startup** by design, rather than silently falling back to `chain` and forking the
+  quorum's task digest.
+- **It is a coordinated fleet-wide flip, not a rolling one.** The profile changes the derived
+  `storage_updates` and therefore the task digest, so it must be identical on every node *and* the router
+  or every signature fails to verify.
+- **It needs a cap-lifted RPC** (`anvil --disable-block-gas-limit`, or `geth --rpc.gascap=0`), or the heavy
+  call OOGs inside the tracer and extraction fails, and it should be paired with
+  `STATE_ENCODING=prestate-net`, because the struct-log encodings cost O(execution steps).
+- **Three preconditions are open**, tracked in `gas-killer/service#356`: (1) the SP1 fraud-proof guest must
+  bind the same lifted limits (`sp1-contract-call#12`) — a guest checking real header limits while
+  operators simulate under lifted ones would judge an honest payload invalid, i.e. **false slashing**;
+  (2) the payload gate's per-byte dispatch constant needs re-measuring against a real `verifyAndUpdate`
+  (`gas-analyzer#166`); (3) every operator's `debug_traceCall` RPC needs its execution cap lifted.
+
+So treat those rows as *what the mechanism will buy once that profile ships*, not as something today's
+default fleet will settle for you.
 
 The upshot: Gas Killer's clean win is **computation that collapses to a small diff** — heavy to compute,
 cheap to apply. When the diff is as large as the work (a flat airdrop, a full re-sort), the on-chain
@@ -78,6 +105,14 @@ These examples deliberately cover both:
   check (shown by `test_guard_limitation_phantomOnNonDepositorEscapes`). Honest operators never build
   such a diff, but it is a reminder to design invariants to cover all reachable state.
 
+- **Pure compute (no diff at all).** `Quicksort` is `pure` — no storage, no logs, no calls — so it
+  contributes *nothing* to a payload and settles for zero at any N and any input. `SortedOracle` pairs it
+  with a six-word commit. This inherits the trust model above with no mitigation: nothing on-chain re-runs
+  the sort, so a quorum that commits a wrong median or a root of a badly-sorted array is not contradicted
+  by anything. Note precisely what `isCommittedOrder` does and does not buy you — it proves a witness
+  array matches what was committed, **not** that the committed array was correctly sorted or that it was
+  the true observation set. It binds the quorum to one answer; it does not make that answer verifiable.
+
 - **Write-bound (compute ≈ diff) — where Gas Killer LOSES.** When the diff scales with the work, there is
   no compute to collapse: you pay to write the same words *plus* the fixed quorum overhead. Two such
   examples (a bulk airdrop and a sorted leaderboard) were built here and **removed** after measuring as
@@ -86,15 +121,19 @@ These examples deliberately cover both:
   such designs can still have *structural* value — one attested batch instead of N user claim
   transactions, no Merkle infrastructure, work chunked across multiple `verifyAndUpdate` calls. But they
   are not a gas win, and this repo no longer presents them as one. If your diff scales with your
-  computation, Gas Killer is the wrong tool.
+  computation, Gas Killer is the wrong tool. The contrast with `SortedOracle` is the whole lesson: it runs
+  the same class of computation the deleted leaderboard did, but stores a commitment plus four order
+  statistics instead of the sorted array, so its diff is six words at any N. What you write decides the
+  verdict, not what you compute.
 
 ## Marketing vs. code
 
 Gas Killer's landing page advertises "objective on-chain slashing" and "infinite computation? no
 problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@7e4289c`), the code backs
-**neither**: there is no on-chain slashing or fraud proof, and the off-chain analyzer simulates within a
-block's gas. Treat the unbounded-computation framing as the *trust-only* regime above, not as a
-verified guarantee.
+**neither**: there is no on-chain slashing or fraud proof, and the default simulation profile
+(`GK_SIM_PROFILE=chain`) stays within a block's gas. A `1 << 40`-gas profile exists but is opt-in, still
+bounded by what a *payload* can carry, and explicitly not production-ready — see the profile note above.
+Treat the unbounded-computation framing as the *trust-only* regime above, not as a verified guarantee.
 
 ## Benchmark honesty
 
