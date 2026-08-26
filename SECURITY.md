@@ -120,11 +120,15 @@ the Sepolia addresses as a testnet integration target, not a production SLA.
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
-## The real-analyzer end-to-end (`script/e2e/`)
+## What the local suite does not prove
 
-The `script/e2e/run-guarded-vault-e2e.sh` demo uses the **real** Gas Killer analyzer to produce the
-storage diff from a traced `settle` transaction, then lands it via `verifyAndUpdate`. What is real
-there: the analyzer-produced `(StateUpdateType[], bytes[])` diff and its on-chain application. What is
-mocked: the BLS quorum signature — the full operator set + EigenLayer deployment cannot run in a local
-demo. So the e2e demonstrates the *data path* faithfully, not the cryptographic signing. Do not read it
-as evidence that the trust model is stronger than described above.
+Both ends of the production pipeline are stand-ins here. Diffs are hand-built by
+`test/helpers/OffchainPayloadBuilder.sol` rather than extracted from a trace, and they are applied
+through a `MockBLSSignatureChecker` that does no cryptography. So a green `forge test` establishes the
+examples' *semantics* — applying the operator's diff reproduces the naive function's storage and events
+byte for byte — and nothing about extraction or signing.
+
+Extraction is [gas-analyzer](https://github.com/gas-killer/gas-analyzer)'s concern and is tested there.
+Real extraction plus a real signing quorum meet these contracts in the service repo's
+[`scripts/examples`][harness] harness. Do not read a green run here as evidence about either, or as
+evidence that the trust model is stronger than described above.

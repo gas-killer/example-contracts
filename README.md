@@ -138,23 +138,16 @@ bytes memory diff = OffchainPayloadBuilder.store(
 Every test proves **equivalence**: running the naive function and applying the operator's diff produce
 byte-identical storage (checked with `vm.load`) and identical logs (checked with `vm.recordLogs`).
 
-## Using the REAL Gas Killer analyzer (end-to-end)
+## Using the REAL Gas Killer analyzer
 
-The Solidity tests build the diff in Solidity (`OffchainPayloadBuilder`) so CI stays fast. To prove the
-examples work with the **actual** off-chain engine, [`script/e2e/`](./script/e2e/) wires in the real
-[Gas Killer analyzer](https://github.com/BreadchainCoop/gas-killer-analyzer) via a thin wrapper
-([`tools/diff-extractor`](./tools/diff-extractor/)): it traces a real `settle` transaction on a local
-anvil and emits the exact `(StateUpdateType[], bytes[])` diff that `verifyAndUpdate` applies.
+The Solidity tests build the diff in Solidity (`OffchainPayloadBuilder`) so `forge test` stays fast and
+offline. That pins the *apply* path; it says nothing about extraction.
 
-```bash
-cd tools/diff-extractor && cargo build --release && cd -
-bash script/e2e/run-guarded-vault-e2e.sh
-```
-
-The operator simulates a `settle` on a sandbox vault, the analyzer extracts the diff, and it lands on a
-separate target vault via `verifyAndUpdate` — reproducing the settle exactly. The BLS signature is
-mocked (the full operator set can't run locally); the **diff is real**. See
-[`script/e2e/README.md`](./script/e2e/README.md).
+Extraction belongs to [gas-analyzer](https://github.com/gas-killer/gas-analyzer) and is tested there —
+`crates/core/src/prestate.rs` holds the net-diff encoding the service signs. The two halves meet
+against these contracts in the service repo, whose [`scripts/examples`][harness] harness builds them,
+deploys them against a running AVS, and drives tasks through the router: the analyzer produces the
+diff, a real operator quorum signs it, and `verifyAndUpdate` lands it on chain.
 
 ## Live on Sepolia testnet
 
@@ -236,6 +229,5 @@ test/mocks/                  MockBLSSignatureChecker (passes/fails the 66% quoru
 test/exposed/                per-example subclasses exposing the diff applier for gas isolation
 test/examples/               *.t.sol (unit + equivalence + verifyAndUpdate) and *.bench.t.sol
 script/                      Deploy<Example>.s.sol + DeployMockBLS.s.sol
-script/e2e/                  real-analyzer end-to-end (run-guarded-vault-e2e.sh + SubmitDiff.s.sol)
-tools/diff-extractor/        Rust wrapper around the real Gas Killer analyzer (tx -> encoded diff)
+script/live/                 client-side verifyAndUpdate assembly + the go-live runbook
 ```
