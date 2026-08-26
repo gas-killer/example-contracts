@@ -5,15 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /// @title PrestateOracle — ground-truth diff vector for the heavy-compute case.
-/// @notice Records what `OnchainLife.step(1)` really does, read off the EVM rather than off any tracer:
-///         forks Sepolia, runs the naive `step(1)` against the REAL deployed OnchainLife, and asserts
-///         the resulting storage and event equal the values pinned below.
+/// @notice Forks Sepolia, runs the naive `step(1)` against the REAL deployed OnchainLife, and asserts
+///         the resulting storage and event equal the constants pinned below.
 ///
-///         The pinning is the point. `step(1)` is ~16.8M gas, past what a struct-log tracer can
-///         produce, so a diff extractor working on that call has nothing to check itself against
-///         except the EVM. These constants are that reference — a conformance vector for any
-///         extractor, and the reason the heavy case can be trusted without a second tracer to
-///         cross-check.
+///         `step(1)` is ~16.8M gas, past what a struct-log tracer can produce, so no tracer output
+///         exists to compare a diff extractor against for this call. These constants stand in for
+///         one, read off EVM execution: a conformance vector for any extractor implementation.
 ///
 /// @dev Run:  RPC_URL=<sepolia-archive> forge test --match-contract PrestateOracle -vv
 ///      Skips automatically when RPC_URL is unset (so the default `forge test` run stays offline).
