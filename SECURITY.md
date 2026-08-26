@@ -105,19 +105,20 @@ verified guarantee.
 - Gas is measured with `gasleft()` deltas around the external call (deterministic), not the
   `vm.startSnapshotGas` cheatcode, which returned unreliable numbers on the pinned Foundry nightly.
 
-## The live Sepolia deployment (`test/live/`)
+## The live Sepolia deployment
 
 A real Gas Killer AVS stack exists on Sepolia (a live `BLSSignatureChecker` + `RegistryCoordinator` +
-`StakeRegistry` with recorded operator stake, reachable from the live `ArraySummationFactory`). The
-`SepoliaLiveTest` forked tests read it and wire `GuardedVault` to the real on-chain checker. Be precise
-about what this is: it is **ephemeral test infrastructure** from earlier deploy runs (each ArraySummation
-instance has its own checker/coordinator; several are even mis-wired to the operator-state-retriever and
-revert) — **not a hosted service with operators signing on demand**. Consequently the live test
-demonstrates only that (a) the deployment is real and (b) the real checker *gates* submissions (it
-rejects an unsigned diff). It does **not** and cannot produce a passing signed `verifyAndUpdate` for a
-new contract, because that needs the operator set to BLS-sign that contract's message hash — i.e. a
-running operator network, which is not on disk here. Do not read the live test as "the hosted service
-works"; read it as "our integration is real and the on-chain gate is enforced."
+`StakeRegistry` with recorded operator stake). It is **ephemeral test infrastructure** from earlier
+deploy runs — each `ArraySummation` instance carries its own checker and coordinator, and several are
+mis-wired to the operator-state-retriever and revert — **not a hosted service with operators signing
+on demand**.
+
+Nothing in this repo tests against it. Settlement against a real operator set is verified from the
+service repo's [`scripts/examples`][harness] harness, which builds these contracts, deploys them
+against a running AVS, and drives tasks through the router until the transition lands on chain. Treat
+the Sepolia addresses as a testnet integration target, not a production SLA.
+
+[harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
 ## The real-analyzer end-to-end (`script/e2e/`)
 
