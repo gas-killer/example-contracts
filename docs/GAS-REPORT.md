@@ -185,9 +185,10 @@ diff through the **real SDK** `verifyAndUpdate` produce byte-identical storage (
 `OffchainPayloadBuilder`, so this pins the apply path — the half these gas numbers are about.
 
 That the **real analyzer** derives the same diff is verified from the service repo, which runs these
-contracts through the analyzer and a live operator quorum. For the heavy case,
-`test/live/PrestateOracle.t.sol` pins the ground-truth vector — what `OnchainLife.step(1)` actually
-writes and logs, read off real EVM execution — which any extractor can be checked against.
+contracts through the analyzer and a live operator quorum.
+
+`test_blinker_knownOracle` is the independent check on the naive computation itself: a Conway blinker
+must rotate after one step, asserted through `getCell` rather than through the diff path.
 
 ---
 
