@@ -174,10 +174,11 @@ The Solidity tests build the diff in Solidity (`OffchainPayloadBuilder`) so `for
 offline. That pins the *apply* path; it says nothing about extraction.
 
 Extraction belongs to [gas-analyzer](https://github.com/gas-killer/gas-analyzer) and is tested there —
-`crates/core/src/prestate.rs` holds the net-diff encoding the service signs. The two halves meet
-against these contracts in the service repo, whose [`scripts/examples`][harness] harness builds them,
-deploys them against a running AVS, and drives tasks through the router: the analyzer produces the
-diff, a real operator quorum signs it, and `verifyAndUpdate` lands it on chain.
+`crates/core/src/prestate.rs` holds the net-diff encoding the service signs. The two halves meet in the
+service repo, whose [`scripts/examples`][harness] harness builds a manifest of these contracts, deploys
+them against a running AVS, and drives tasks through the router: the analyzer produces the diff, a real
+operator quorum signs it, and `verifyAndUpdate` lands it on chain. That manifest names `OnchainLife`
+and `GuardedVault`; `SortedOracle` is not in it yet.
 
 ## Live on Sepolia testnet
 
@@ -197,6 +198,9 @@ These examples are exercised against a real AVS from the service repo, not from 
 [`scripts/examples`][harness] harness builds this repo's artifacts, deploys them wired to a running
 AVS, and drives real tasks through the router until `stateTransitionCount` advances on chain, checked
 in that repo's CI on every push. `forge test` here is offline and deterministic.
+
+Which examples that covers is set by the harness manifest — see
+[Using the REAL Gas Killer analyzer](#using-the-real-gas-killer-analyzer) above.
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
