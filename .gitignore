@@ -20,6 +20,3 @@ docs/*
 # Gas snapshots produced by `forge snapshot` / vm.startSnapshotGas (noisy; regenerate locally)
 snapshots/
 .gas-snapshot
-
-# Rust build artifacts for the analyzer wrapper tool
-tools/**/target/

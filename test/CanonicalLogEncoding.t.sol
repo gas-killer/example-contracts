@@ -23,8 +23,8 @@ import {StateChangeHandlerLib, StateUpdateType} from "gas-killer-sdk/StateChange
 ///         directions — that `OffchainPayloadBuilder` (which mirrors what the Rust analyzer emits) is
 ///         canonical for LOG0..LOG4, and that a deliberately non-canonical payload is rejected.
 ///
-/// @dev The Rust side of the same contract is covered end-to-end by `script/e2e/run-prestate-e2e.sh`,
-///      which feeds real `gk-diff-extractor` output through `verifyAndUpdate` (LOG2 + LOG3).
+/// @dev This covers the Solidity side only. The analyzer emits the same canonical layout from Rust and
+///      pins it in its own tests; see gas-analyzer's `crates/core`.
 contract CanonicalLogEncodingTest is Test {
     OnchainLifeExposed internal consumer;
 

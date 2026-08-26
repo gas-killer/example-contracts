@@ -4,14 +4,16 @@ pragma solidity ^0.8.13;
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-/// @title PrestateOracle — independent correctness check for the `--prestate` extractor's heavy case.
-/// @notice The structLogs path (`gk-diff-extractor --call`) cannot extract `OnchainLife.step(1)` — the
-///         node times out producing the 16.8M-gas trace — so the equivalence harness has no `--call`
-///         reference to compare the `--prestate` output against for that case. This test supplies an
-///         *independent* oracle: the EVM itself. It forks Sepolia, runs the naive `step(1)` against the
-///         REAL deployed OnchainLife, and asserts the resulting storage exactly matches the values the
-///         `--prestate` extractor reported (board word 0 + generation). If they match, the extracted
-///         diff is the TRUE diff — proven against ground-truth EVM semantics, not against another tracer.
+/// @title PrestateOracle — ground-truth diff vector for the heavy-compute case.
+/// @notice Records what `OnchainLife.step(1)` really does, read off the EVM rather than off any tracer:
+///         forks Sepolia, runs the naive `step(1)` against the REAL deployed OnchainLife, and asserts
+///         the resulting storage and event equal the values pinned below.
+///
+///         The pinning is the point. `step(1)` is ~16.8M gas, past what a struct-log tracer can
+///         produce, so a diff extractor working on that call has nothing to check itself against
+///         except the EVM. These constants are that reference — a conformance vector for any
+///         extractor, and the reason the heavy case can be trusted without a second tracer to
+///         cross-check.
 ///
 /// @dev Run:  RPC_URL=<sepolia-archive> forge test --match-contract PrestateOracle -vv
 ///      Skips automatically when RPC_URL is unset (so the default `forge test` run stays offline).
@@ -20,7 +22,7 @@ contract PrestateOracleTest is Test {
     address constant LIFE = 0x01A8C90963EbE399872C63afe0c885A43c93fA9C;
     address constant CALLER = 0xff467a85932cF543Df50255f00A8A829c12a3A11;
 
-    // Values the `--prestate` extractor reported for step(1) (see tools/diff-extractor/test-prestate.sh):
+    // The true storage effect of step(1): board word 0 + generation.
     bytes32 constant EXPECTED_WORD0 = 0x0000000000000002000000000000000600000000000000050000000000000000;
     uint256 constant EXPECTED_GENERATION = 1;
     // …and the LOG2 it emitted: topic1 = event sig, topic2 = generation, data = abi.encode(boardHash).

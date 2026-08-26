@@ -177,15 +177,17 @@ the savings are unbounded.
 
 ## Verification
 
-Correctness isn't assumed. For both examples the pipeline is proven end-to-end:
+Correctness isn't assumed, but the halves are established in different places.
 
-- The **real analyzer** extracts the diff from a live trace.
-- The extracted hex goes through the **real SDK** `verifyAndUpdate`.
-- The result is asserted **byte-identical** to running the naive function — storage slot by slot, and
-  events in emission order.
+Here, every benchmark asserts **equivalence**: running the naive function and applying the operator's
+diff through the **real SDK** `verifyAndUpdate` produce byte-identical storage (slot by slot, via
+`vm.load`) and identical events in emission order (`vm.recordLogs`). The diff is hand-built by
+`OffchainPayloadBuilder`, so this pins the apply path — the half these gas numbers are about.
 
-`script/e2e/run-prestate-e2e.sh` does exactly this on a local anvil for both contracts. On-chain state and
-event streams match the naive execution exactly.
+That the **real analyzer** derives the same diff is verified from the service repo, which runs these
+contracts through the analyzer and a live operator quorum. For the heavy case,
+`test/live/PrestateOracle.t.sol` pins the ground-truth vector — what `OnchainLife.step(1)` actually
+writes and logs, read off real EVM execution — which any extractor can be checked against.
 
 ---
 

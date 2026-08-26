@@ -58,9 +58,9 @@ these contracts against a running AVS and drives tasks through the router until 
 
 ## Status — what is and isn't verified
 
-- ✅ **Diff extraction and on-chain application are proven** for both examples: the real analyzer extracts
-  the diff and the real SDK applies it via `verifyAndUpdate`, reproducing naive state and events
-  byte-for-byte (`script/e2e/run-prestate-e2e.sh`, local anvil, mocked quorum).
+- ✅ **On-chain application is proven** for both examples: the real SDK applies the operator's diff via
+  `verifyAndUpdate`, reproducing naive state and events byte-for-byte (`test/examples/`, offline, with
+  a hand-built diff and a mocked quorum).
 - ✅ **On-chain wiring and settlement** are verified from the service repo: its `scripts/examples`
   harness deploys these contracts against a running AVS and asserts `stateTransitionCount` advances,
   which is a real `BLSSignatureChecker` accepting a real aggregated signature.

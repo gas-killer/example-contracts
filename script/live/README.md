@@ -27,7 +27,7 @@ Quorum APKs or indices that disagree with the registry revert `InvalidQuorumApkH
 
 | Argument | Source | Who provides |
 |---|---|---|
-| `storageUpdates` | the analyzer (`tools/diff-extractor`) traces the tracked call | **us** |
+| `storageUpdates` | the analyzer traces the tracked call | **us** |
 | `transitionIndex` | `consumer.stateTransitionCount()` | **us** |
 | `targetFunction` | `bytes4(keccak256("settle(address[],int256[])"))` | **us** |
 | `msgHash` | `consumer.getMessageHash(transitionIndex, targetFunction, storageUpdates)` | **us** |
@@ -58,7 +58,7 @@ export AVS_ADDRESS=... SIG_CHECKER_ADDRESS=...
 forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
 
 # 2. Produce the diff for the action you want applied (the analyzer; simulate or trace the call).
-#    -> STORAGE_UPDATES = 0x…  (see tools/diff-extractor + script/e2e)
+#    -> STORAGE_UPDATES = 0x…  (github.com/gas-killer/gas-analyzer)
 
 # 3. Have the operator quorum sign for (transitionIndex, consumer, targetFunction, storageUpdates),
 #    which yields sigma + apkG2. The hosted service does this and returns a ready-to-sign transaction
