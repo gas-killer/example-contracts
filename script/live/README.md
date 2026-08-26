@@ -16,14 +16,16 @@ Everything else (`quorumApks`, `quorumApkIndices`, `totalStakeIndices`, `nonSign
 `nonSignerQuorumBitmapIndices`, `msgHash`) is assembled by [`LiveSubmission.sol`](./LiveSubmission.sol)
 from `OperatorStateRetriever.getCheckSignaturesIndices` + `BLSApkRegistry.getApk`.
 
-**This is proven against the live chain.** `test/live/SepoliaSubmit.t.sol` forks Sepolia, assembles the
-full struct from the real registry, and submits with a placeholder signature — the real on-chain
-`BLSSignatureChecker` accepts every field and reverts **only** at `InvalidBLSSignature()` (0xab1b236b),
-not at `InvalidQuorumApkHash()`. i.e. our assembly is correct; only `(sigma, apkG2)` is missing.
+This is a reference implementation of the assembly the hosted router performs in Rust; that path is
+exercised end to end in the service repo, where a real operator set signs and the transition lands on
+chain. The assembler here is not itself covered by a test in this repo — assembling a submission needs
+a registry with real operator history, which only a live chain provides, and a test pinned to one live
+deployment breaks whenever that deployment is replaced.
 
-```bash
-SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com forge test --match-contract SepoliaSubmitTest -vvv
-```
+An assembly mistake surfaces at submission as `InvalidQuorumApkHash()` (`0xe1310aed`) rather than
+`InvalidBLSSignature()` (`0xab1b236b`): the former means the quorum APKs or indices disagree with the
+registry, the latter means everything except `(sigma, apkG2)` was right. If you are wiring this up,
+that pair of selectors is the signal to watch.
 
 ## Provenance of every `verifyAndUpdate` argument
 

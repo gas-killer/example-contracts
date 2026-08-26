@@ -170,23 +170,22 @@ export AVS_ADDRESS=...          # from the docs
 export SIG_CHECKER_ADDRESS=...  # from the docs
 ```
 
-Run the live integration tests (they fork Sepolia; they **skip** unless `SEPOLIA_RPC_URL` is set, so
-default `forge test` is unaffected):
+These examples are exercised against a real AVS from the service repo, not from here. Its
+[`scripts/examples`][harness] harness builds this repo's artifacts, deploys them wired to a running
+AVS, and drives real tasks through the router until `stateTransitionCount` advances on chain — checked
+in that repo's CI on every push.
 
-```bash
-SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com \
-  forge test --match-contract SepoliaLiveTest -vv
-```
+[harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
-They read the live consumer and wire `GuardedVault` to the **real on-chain** `BLSSignatureChecker`,
-showing `verifyAndUpdate` is gated by it.
+That covers the property a fork test from here cannot reach: a real `BLSSignatureChecker` **accepting**
+a real aggregated BLS signature. Forking only ever demonstrates rejection, because the operator keys
+are not on disk. So `forge test` in this repo stays offline and deterministic, and the integration
+claim is made where an operator set actually exists.
 
 **Full submission, wired to the real AVS.** [`script/live/`](./script/live/) assembles every
 `verifyAndUpdate` argument from the live EigenLayer registry (`OperatorStateRetriever` +
 `BLSApkRegistry`) — leaving only the operator BLS signature `(sigma, apkG2)`, which the AVS's existing
-operator set produces. `test/live/SepoliaSubmit.t.sol` proves this against the live chain: with a
-placeholder signature, the real checker accepts every assembled field and reverts **only** at
-`InvalidBLSSignature` (not `InvalidQuorumApkHash`). See the integration runbook in
+operator set produces. See the integration runbook in
 [`script/live/README.md`](./script/live/README.md) for how to plug in the signature and go live.
 
 To deploy an example wired to the real checker:

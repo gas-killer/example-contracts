@@ -105,19 +105,27 @@ verified guarantee.
 - Gas is measured with `gasleft()` deltas around the external call (deterministic), not the
   `vm.startSnapshotGas` cheatcode, which returned unreliable numbers on the pinned Foundry nightly.
 
-## The live Sepolia deployment (`test/live/`)
+## The live Sepolia deployment
 
 A real Gas Killer AVS stack exists on Sepolia (a live `BLSSignatureChecker` + `RegistryCoordinator` +
-`StakeRegistry` with recorded operator stake, reachable from the live `ArraySummationFactory`). The
-`SepoliaLiveTest` forked tests read it and wire `GuardedVault` to the real on-chain checker. Be precise
-about what this is: it is **ephemeral test infrastructure** from earlier deploy runs (each ArraySummation
-instance has its own checker/coordinator; several are even mis-wired to the operator-state-retriever and
-revert) — **not a hosted service with operators signing on demand**. Consequently the live test
-demonstrates only that (a) the deployment is real and (b) the real checker *gates* submissions (it
-rejects an unsigned diff). It does **not** and cannot produce a passing signed `verifyAndUpdate` for a
-new contract, because that needs the operator set to BLS-sign that contract's message hash — i.e. a
-running operator network, which is not on disk here. Do not read the live test as "the hosted service
-works"; read it as "our integration is real and the on-chain gate is enforced."
+`StakeRegistry` with recorded operator stake). Be precise about what it is: **ephemeral test
+infrastructure** accumulated across deploy runs — each target deploy that leaves `SIG_CHECKER_ADDRESS`
+unset provisions its *own* checker, so many sibling instances exist, several mis-wired and reverting —
+**not a hosted service with operators signing on demand**.
+
+Nothing in this repo tests against it. A fork test can only ever show that a real checker *rejects* an
+unsigned diff; it cannot produce a passing signed `verifyAndUpdate`, because that needs the operator
+set to BLS-sign the target's message hash and those keys are not on disk here. Asserting a live
+deployment's wiring from a test also means the test breaks when someone else redeploys, with no
+relationship to any change in this repo.
+
+So that claim is made where an operator set exists: the service repo's
+[`scripts/examples`][harness] harness builds these contracts, deploys them against a running AVS, and
+drives tasks through the router until the transition lands on chain. Read a green run there as "the
+integration works end to end", and treat the Sepolia addresses as a testnet target, not a production
+SLA.
+
+[harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
 ## The real-analyzer end-to-end (`script/e2e/`)
 

@@ -51,15 +51,20 @@ export SIG_CHECKER_ADDRESS=...  # from the docs
 forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
 ```
 
-The fork test `test/live/SepoliaLive.t.sol` proves our contracts wire to (and are gated by) the real
-on-chain checker.
+Whether a consumer built this way really settles is verified from the service repo, whose
+[`scripts/examples`][harness] harness deploys these contracts against a running AVS and drives tasks
+through the router until the transition lands.
+
+[harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
 ## Status — what is and isn't verified
 
 - ✅ **Diff extraction and on-chain application are proven** for both examples: the real analyzer extracts
   the diff and the real SDK applies it via `verifyAndUpdate`, reproducing naive state and events
   byte-for-byte (`script/e2e/run-prestate-e2e.sh`, local anvil, mocked quorum).
-- ✅ **On-chain wiring** to the real Sepolia checker is fork-tested.
+- ✅ **On-chain wiring and settlement** are verified from the service repo: its `scripts/examples`
+  harness deploys these contracts against a running AVS and asserts `stateTransitionCount` advances,
+  which is a real `BLSSignatureChecker` accepting a real aggregated signature.
 - ⚠️ **No end-to-end run through the hosted service is currently reproducible**, because the credential
   documented previously is retired and we hold no replacement API key. Earlier rounds *did* land under the
   old broadcasting model (e.g. `stateTransitionCount` 0 → 1 on GuardedVault), but those runs predate both
