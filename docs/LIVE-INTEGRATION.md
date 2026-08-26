@@ -15,28 +15,7 @@ The aggregator **renders** a ready-to-sign payload; **the caller submits it**, b
 Authentication is a per-client API key minted by the operators: `Authorization: Bearer $GK_API_KEY`.
 Never commit it.
 
-This document covers only what is specific to this repo: the client script, and how the examples here
-are wired to the live AVS.
-
-## Client: `script/live/gk-trigger.sh`
-
-Builds the calldata with `cast`, posts the task, polls until ready, and (with `GK_SUBMIT_KEY`) submits the
-rendered payload — otherwise it prints the exact `cast send` for you to run.
-
-```bash
-export GK_API_KEY=<your key>
-
-# render + submit automatically
-GK_SUBMIT_KEY=0x<funded-sepolia-key> ./script/live/gk-trigger.sh \
-  $GUARDED_VAULT "settle(address[],int256[])" "[$A,$B]" "[-200,200]" --watch
-
-# render only (prints the payload to submit yourself)
-./script/live/gk-trigger.sh $LIFE "step(uint32)" 1 --watch
-```
-
-Env knobs: `GK_API_KEY`, `GK_SUBMIT_KEY`, `GK_BASE_URL`, `GK_FROM`, `GK_RPC`, `GK_BLOCK`,
-`GK_TRANSITION_INDEX` (see the script header). The client checks HTTP status and surfaces `.error.code`,
-so an auth or rate-limit failure aborts loudly instead of polling forever.
+This document covers only what is specific to this repo: how the examples here are wired to the live AVS.
 
 ## Wiring our examples to the live AVS
 

@@ -204,11 +204,9 @@ Which examples that covers is set by the harness manifest — see
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
-**Full submission, wired to the real AVS.** [`script/live/`](./script/live/) assembles every
-`verifyAndUpdate` argument from the live EigenLayer registry (`OperatorStateRetriever` +
-`BLSApkRegistry`) — leaving only the operator BLS signature `(sigma, apkG2)`, which the AVS's existing
-operator set produces. See the integration runbook in
-[`script/live/README.md`](./script/live/README.md) for how to plug in the signature and go live.
+Of the values a `verifyAndUpdate` call carries, only the aggregate signature `(sigma, apkG2)` needs
+operator keys; the rest is derivable from public on-chain state. [Where each argument comes
+from](https://gaskiller.xyz/docs/solidity/reference#where-each-argument-comes-from) has the breakdown.
 
 To deploy an example wired to the real checker:
 
@@ -227,17 +225,8 @@ submit/poll/settle flow, and the [API Reference](https://gaskiller.xyz/docs/api/
 every field, status code and error. Requests are authenticated with a per-client API key minted by the
 operators.
 
-The client [`script/live/gk-trigger.sh`](./script/live/gk-trigger.sh) wraps that flow for the examples
-in this repo:
-
-```bash
-GK_API_KEY=<your key> ./script/live/gk-trigger.sh \
-  $GUARDED_VAULT "settle(address[],int256[])" "[]" "[]" --watch
-```
-
-Set `GK_SUBMIT_KEY` to have it broadcast the rendered payload too; otherwise it prints the exact
-`cast send`. See [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md) for the client's env knobs and
-how the examples are wired.
+See [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md) for how the examples in this repo are wired
+to the live AVS.
 
 ## Finding storage slots
 
@@ -264,5 +253,4 @@ test/mocks/                  MockBLSSignatureChecker (passes/fails the 66% quoru
 test/exposed/                per-example subclasses exposing the diff applier for gas isolation
 test/examples/               *.t.sol (unit + equivalence + verifyAndUpdate) and *.bench.t.sol
 script/                      Deploy<Example>.s.sol + DeployMockBLS.s.sol
-script/live/                 client-side verifyAndUpdate assembly + the go-live runbook
 ```
