@@ -30,13 +30,6 @@ import {LiveDeployment} from "../helpers/LiveDeployment.sol";
 ///
 ///         Forked test — runs only when `SEPOLIA_RPC_URL` is set (otherwise skips).
 contract SepoliaSubmitTest is Test {
-    /// @dev The single hardcoded address; AVS, checker and registry coordinator are derived from it
-    ///      (see `LiveDeployment`). Deriving is what keeps them in agreement: the assembled quorum
-    ///      APK indices come from the coordinator, and the checker validates them, so a checker and
-    ///      coordinator from different deployments would revert `InvalidQuorumApkHash` — the exact
-    ///      failure this test exists to rule out. Refresh from `GET /avs-metadata` if it goes stale.
-    address constant LIVE_INSTANCE = 0xF143a9D93045474C2B573d21AC1CCe8dB2b06dbD;
-
     function _forkOrSkip() internal returns (bool) {
         string memory rpc = vm.envOr("SEPOLIA_RPC_URL", string(""));
         if (bytes(rpc).length == 0) {
@@ -50,12 +43,16 @@ contract SepoliaSubmitTest is Test {
     function test_live_assembleFromRealRegistry_onlySignatureMissing() public {
         if (!_forkOrSkip()) return;
 
-        LiveDeployment.Wiring memory w = LiveDeployment.resolve(LIVE_INSTANCE);
+        // AVS, checker and coordinator all come from one reference consumer (see `LiveDeployment`).
+        // Deriving is what keeps them in agreement: the assembled quorum APK indices come from the
+        // coordinator and the checker validates them, so a checker and coordinator from different
+        // deployments would revert `InvalidQuorumApkHash` — the exact failure this test rules out.
+        LiveDeployment.Wiring memory w = LiveDeployment.resolve();
         ISlashingRegistryCoordinator registryCoordinator = ISlashingRegistryCoordinator(w.coordinator);
         assertGt(
             LiveDeployment.quorumStake(w, 0),
             0,
-            "quorum 0 has no registered stake: LIVE_INSTANCE points at an incomplete AVS stack"
+            "quorum 0 has no registered stake: GK_LIVE_INSTANCE points at an incomplete AVS stack"
         );
 
         OperatorStateRetriever retriever = new OperatorStateRetriever();

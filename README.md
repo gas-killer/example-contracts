@@ -181,6 +181,20 @@ SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com \
 They read the live consumer and wire `GuardedVault` to the **real on-chain** `BLSSignatureChecker`,
 showing `verifyAndUpdate` is gated by it.
 
+Every address they touch — AVS, checker, registry coordinator, stake registry — is derived on chain
+from one reference consumer, so the set cannot drift out of agreement with itself. That reference has
+a default in [`test/helpers/LiveDeployment.sol`](./test/helpers/LiveDeployment.sol) and is overridable
+with `GK_LIVE_INSTANCE`, so following a redeployment is a config change rather than a code edit:
+
+```bash
+GK_LIVE_INSTANCE=$(curl -s https://testnet.gaskiller.xyz/avs-metadata | jq -r .contracts.demoTarget) \
+SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com \
+  forge test --match-path "test/live/*" -vv
+```
+
+A default that has gone stale — a torn-down deployment, or a mistyped override — fails naming the hop
+that has no code, not with a bare revert.
+
 **Full submission, wired to the real AVS.** [`script/live/`](./script/live/) assembles every
 `verifyAndUpdate` argument from the live EigenLayer registry (`OperatorStateRetriever` +
 `BLSApkRegistry`) — leaving only the operator BLS signature `(sigma, apkG2)`, which the AVS's existing

@@ -22,19 +22,6 @@ import {ILiveConsumer, LiveDeployment} from "../helpers/LiveDeployment.sol";
 ///         hash, and those operator keys are not on disk. Driving a real signature means going
 ///         through the hosted service; see `docs/LIVE-INTEGRATION.md` and SECURITY.md.
 contract SepoliaLiveTest is Test {
-    /// @dev The single address this suite hardcodes. Everything else — AVS, checker, registry
-    ///      coordinator, stake registry — is derived from it via `LiveDeployment.resolve`, so a
-    ///      redeployment invalidates one constant rather than a table of five that can drift out of
-    ///      agreement with each other.
-    ///
-    ///      A consumer deployed by the hosted service's own target job, wired to the checker that
-    ///      job provisioned and with a settled `stateTransitionCount`. Whether it is still the
-    ///      *current* deployment is not something these tests can determine — a superseded stack
-    ///      stays deployed and keeps its staked operators, so it reads identically. Refresh this
-    ///      from the `contracts` block of `GET https://testnet.gaskiller.xyz/avs-metadata`, which is
-    ///      the only authoritative answer.
-    address constant LIVE_INSTANCE = 0xF143a9D93045474C2B573d21AC1CCe8dB2b06dbD;
-
     function _forkOrSkip() internal returns (bool) {
         string memory rpc = vm.envOr("SEPOLIA_RPC_URL", string(""));
         if (bytes(rpc).length == 0) {
@@ -49,29 +36,29 @@ contract SepoliaLiveTest is Test {
     function test_live_readsRealSepoliaDeployment() public {
         if (!_forkOrSkip()) return;
 
-        ILiveConsumer c = ILiveConsumer(LIVE_INSTANCE);
-        LiveDeployment.Wiring memory w = LiveDeployment.resolve(LIVE_INSTANCE);
+        // Resolving is itself the existence proof: `LiveDeployment.resolve` walks the reference
+        // consumer down to the stake registry and requires code at every hop, naming the broken one
+        // if any is missing.
+        LiveDeployment.Wiring memory w = LiveDeployment.resolve();
+        ILiveConsumer c = ILiveConsumer(w.consumer);
+        uint96 quorum0Stake = LiveDeployment.quorumStake(w, 0);
 
         assertEq(c.QUORUM_THRESHOLD(), 66, "66% quorum threshold");
-        assertGt(w.checker.code.length, 0, "the wired BLSSignatureChecker has code on Sepolia");
-        assertGt(w.avs.code.length, 0, "the wired AVS has code on Sepolia");
-        assertGt(w.coordinator.code.length, 0, "the checker resolves to a registry coordinator");
 
         // The stack is complete: operators are registered with stake, not a half-provisioned
         // deployment with empty registries.
         //
-        // This deliberately does not claim LIVE_INSTANCE is the *current* deployment. A superseded
-        // stack keeps its operators and their stake, so it reads identically here — which stack the
-        // hosted service signs for is off-chain information, published as the `contracts` block of
-        // `GET /avs-metadata`. The real wiring guard is SepoliaSubmitTest: assembling quorum data
-        // from this coordinator and having this checker accept it proves the two agree.
+        // This deliberately does not claim the reference consumer belongs to the *current*
+        // deployment. A superseded stack keeps its operators and their stake, so it reads
+        // identically here — which stack the hosted service signs for is off-chain information,
+        // published as the `contracts` block of `GET /avs-metadata`. The real wiring guard is
+        // SepoliaSubmitTest: assembling quorum data from this coordinator and having this checker
+        // accept it proves the two agree.
         assertGt(
-            LiveDeployment.quorumStake(w, 0),
-            0,
-            "quorum 0 has no registered stake: LIVE_INSTANCE points at an incomplete AVS stack"
+            quorum0Stake, 0, "quorum 0 has no registered stake: GK_LIVE_INSTANCE points at an incomplete AVS stack"
         );
 
-        console.log("live ArraySummation:        ", LIVE_INSTANCE);
+        console.log("live ArraySummation:        ", w.consumer);
         console.log("  getArrayLength:           ", c.getArrayLength());
         console.log("  currentSum:               ", c.currentSum());
         console.log("  stateTransitionCount:     ", c.stateTransitionCount());
@@ -79,7 +66,7 @@ contract SepoliaLiveTest is Test {
         console.log("  blsSignatureChecker:      ", w.checker);
         console.log("  registryCoordinator:      ", w.coordinator);
         console.log("  stakeRegistry:            ", w.stakeRegistry);
-        console.log("  quorum 0 total stake:     ", LiveDeployment.quorumStake(w, 0));
+        console.log("  quorum 0 total stake:     ", quorum0Stake);
     }
 
     /// @notice Wire OUR GuardedVault to the REAL Sepolia BLSSignatureChecker and show verifyAndUpdate is
@@ -88,7 +75,7 @@ contract SepoliaLiveTest is Test {
     function test_live_guardedVaultWiredToRealChecker_rejectsUnsignedDiff() public {
         if (!_forkOrSkip()) return;
 
-        LiveDeployment.Wiring memory w = LiveDeployment.resolve(LIVE_INSTANCE);
+        LiveDeployment.Wiring memory w = LiveDeployment.resolve();
         GuardedVaultExposed v = new GuardedVaultExposed(w.avs, w.checker, 5000);
         assertEq(v.blsSignatureChecker(), w.checker, "our vault is wired to the real checker");
 
