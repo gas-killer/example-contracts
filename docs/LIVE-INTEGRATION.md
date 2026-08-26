@@ -51,9 +51,8 @@ export SIG_CHECKER_ADDRESS=...  # from the docs
 forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
 ```
 
-Whether a consumer built this way really settles is verified from the service repo, whose
-[`scripts/examples`][harness] harness deploys these contracts against a running AVS and drives tasks
-through the router until the transition lands.
+Settlement is verified from the service repo, whose [`scripts/examples`][harness] harness deploys
+these contracts against a running AVS and drives tasks through the router until the transition lands.
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 

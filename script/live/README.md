@@ -16,16 +16,12 @@ Everything else (`quorumApks`, `quorumApkIndices`, `totalStakeIndices`, `nonSign
 `nonSignerQuorumBitmapIndices`, `msgHash`) is assembled by [`LiveSubmission.sol`](./LiveSubmission.sol)
 from `OperatorStateRetriever.getCheckSignaturesIndices` + `BLSApkRegistry.getApk`.
 
-This is a reference implementation of the assembly the hosted router performs in Rust; that path is
-exercised end to end in the service repo, where a real operator set signs and the transition lands on
-chain. The assembler here is not itself covered by a test in this repo — assembling a submission needs
-a registry with real operator history, which only a live chain provides, and a test pinned to one live
-deployment breaks whenever that deployment is replaced.
+The hosted router performs the same assembly in Rust, and that path is exercised end to end in the
+service repo against a real operator set. Nothing in this repo tests the assembler here.
 
-An assembly mistake surfaces at submission as `InvalidQuorumApkHash()` (`0xe1310aed`) rather than
-`InvalidBLSSignature()` (`0xab1b236b`): the former means the quorum APKs or indices disagree with the
-registry, the latter means everything except `(sigma, apkG2)` was right. If you are wiring this up,
-that pair of selectors is the signal to watch.
+Quorum APKs or indices that disagree with the registry revert `InvalidQuorumApkHash()`
+(`0xe1310aed`). A correct assembly carrying a placeholder signature reverts `InvalidBLSSignature()`
+(`0xab1b236b`).
 
 ## Provenance of every `verifyAndUpdate` argument
 

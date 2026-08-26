@@ -108,22 +108,15 @@ verified guarantee.
 ## The live Sepolia deployment
 
 A real Gas Killer AVS stack exists on Sepolia (a live `BLSSignatureChecker` + `RegistryCoordinator` +
-`StakeRegistry` with recorded operator stake). Be precise about what it is: **ephemeral test
-infrastructure** accumulated across deploy runs — each target deploy that leaves `SIG_CHECKER_ADDRESS`
-unset provisions its *own* checker, so many sibling instances exist, several mis-wired and reverting —
-**not a hosted service with operators signing on demand**.
+`StakeRegistry` with recorded operator stake). It is **ephemeral test infrastructure** from earlier
+deploy runs — each `ArraySummation` instance carries its own checker and coordinator, and several are
+mis-wired to the operator-state-retriever and revert — **not a hosted service with operators signing
+on demand**.
 
-Nothing in this repo tests against it. A fork test can only ever show that a real checker *rejects* an
-unsigned diff; it cannot produce a passing signed `verifyAndUpdate`, because that needs the operator
-set to BLS-sign the target's message hash and those keys are not on disk here. Asserting a live
-deployment's wiring from a test also means the test breaks when someone else redeploys, with no
-relationship to any change in this repo.
-
-So that claim is made where an operator set exists: the service repo's
-[`scripts/examples`][harness] harness builds these contracts, deploys them against a running AVS, and
-drives tasks through the router until the transition lands on chain. Read a green run there as "the
-integration works end to end", and treat the Sepolia addresses as a testnet target, not a production
-SLA.
+Nothing in this repo tests against it. Settlement against a real operator set is verified from the
+service repo's [`scripts/examples`][harness] harness, which builds these contracts, deploys them
+against a running AVS, and drives tasks through the router until the transition lands on chain. Treat
+the Sepolia addresses as a testnet integration target, not a production SLA.
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 

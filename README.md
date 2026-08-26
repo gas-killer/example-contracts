@@ -172,15 +172,10 @@ export SIG_CHECKER_ADDRESS=...  # from the docs
 
 These examples are exercised against a real AVS from the service repo, not from here. Its
 [`scripts/examples`][harness] harness builds this repo's artifacts, deploys them wired to a running
-AVS, and drives real tasks through the router until `stateTransitionCount` advances on chain — checked
-in that repo's CI on every push.
+AVS, and drives real tasks through the router until `stateTransitionCount` advances on chain, checked
+in that repo's CI on every push. `forge test` here is offline and deterministic.
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
-
-That covers the property a fork test from here cannot reach: a real `BLSSignatureChecker` **accepting**
-a real aggregated BLS signature. Forking only ever demonstrates rejection, because the operator keys
-are not on disk. So `forge test` in this repo stays offline and deterministic, and the integration
-claim is made where an operator set actually exists.
 
 **Full submission, wired to the real AVS.** [`script/live/`](./script/live/) assembles every
 `verifyAndUpdate` argument from the live EigenLayer registry (`OperatorStateRetriever` +
