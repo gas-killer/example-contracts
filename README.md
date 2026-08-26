@@ -205,7 +205,8 @@ Which examples that covers is set by the harness manifest — see
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
 Of the values a `verifyAndUpdate` call carries, only the aggregate signature `(sigma, apkG2)` needs
-operator keys; the rest is derivable from public on-chain state. [Where each argument comes
+operator keys. Everything else anyone can produce: the storage diff from an off-chain trace of the
+tracked function, the remainder from public on-chain reads. [Where each argument comes
 from](https://gaskiller.xyz/docs/solidity/reference#where-each-argument-comes-from) has the breakdown.
 
 To deploy an example wired to the real checker:
@@ -225,8 +226,19 @@ submit/poll/settle flow, and the [API Reference](https://gaskiller.xyz/docs/api/
 every field, status code and error. Requests are authenticated with a per-client API key minted by the
 operators.
 
-See [`docs/LIVE-INTEGRATION.md`](./docs/LIVE-INTEGRATION.md) for how the examples in this repo are wired
-to the live AVS.
+### Status — what is and isn't verified
+
+- ✅ **On-chain application is proven** for all three examples: the real SDK applies the operator's
+  diff via `verifyAndUpdate`, reproducing naive state and events byte-for-byte (`test/examples/`,
+  offline, with a hand-built diff and a mocked quorum).
+- ✅ **On-chain wiring and settlement** are verified from the service repo: its `scripts/examples`
+  harness deploys the examples its manifest names — `OnchainLife` and `GuardedVault` — against a
+  running AVS and asserts `stateTransitionCount` advances, which is a real `BLSSignatureChecker`
+  accepting a real aggregated signature. `SortedOracle` is not in that manifest yet.
+- ⚠️ **No end-to-end run through the hosted service is currently reproducible**, because the
+  credential documented previously is retired and we hold no replacement API key. Earlier rounds
+  *did* land under the old broadcasting model (e.g. `stateTransitionCount` 0 → 1 on GuardedVault),
+  but those runs predate both points above and should not be presented as reproducible today.
 
 ## Finding storage slots
 
