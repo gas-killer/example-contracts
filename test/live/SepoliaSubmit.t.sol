@@ -13,6 +13,7 @@ import {
     IBLSSignatureCheckerErrors
 } from "@eigenlayer-middleware/interfaces/IBLSSignatureChecker.sol";
 import {BN254} from "@eigenlayer-middleware/libraries/BN254.sol";
+import {LiveDeployment} from "../helpers/LiveDeployment.sol";
 
 /// @title SepoliaSubmitTest
 /// @notice Proves the deterministic, client-side assembly of a `verifyAndUpdate` submission against the
@@ -29,10 +30,12 @@ import {BN254} from "@eigenlayer-middleware/libraries/BN254.sol";
 ///
 ///         Forked test — runs only when `SEPOLIA_RPC_URL` is set (otherwise skips).
 contract SepoliaSubmitTest is Test {
-    address constant AVS = 0x2015983cDd409B1838F4C1cCa9085c946C5A9F81;
-    address constant BLS_CHECKER = 0x22FfcFD8cCCb2e70dbd6FE1DAf951080595E02f2;
-    ISlashingRegistryCoordinator constant REGISTRY_COORDINATOR =
-        ISlashingRegistryCoordinator(0x7aA89B1CBC571a1c6F7E6B262E06e614104Fb56d);
+    /// @dev The single hardcoded address; AVS, checker and registry coordinator are derived from it
+    ///      (see `LiveDeployment`). Deriving is what keeps them in agreement: the assembled quorum
+    ///      APK indices come from the coordinator, and the checker validates them, so a checker and
+    ///      coordinator from different deployments would revert `InvalidQuorumApkHash` — the exact
+    ///      failure this test exists to rule out. Refresh from `GET /avs-metadata` if it goes stale.
+    address constant LIVE_INSTANCE = 0xF143a9D93045474C2B573d21AC1CCe8dB2b06dbD;
 
     function _forkOrSkip() internal returns (bool) {
         string memory rpc = vm.envOr("SEPOLIA_RPC_URL", string(""));
@@ -47,8 +50,16 @@ contract SepoliaSubmitTest is Test {
     function test_live_assembleFromRealRegistry_onlySignatureMissing() public {
         if (!_forkOrSkip()) return;
 
+        LiveDeployment.Wiring memory w = LiveDeployment.resolve(LIVE_INSTANCE);
+        ISlashingRegistryCoordinator registryCoordinator = ISlashingRegistryCoordinator(w.coordinator);
+        assertGt(
+            LiveDeployment.quorumStake(w, 0),
+            0,
+            "quorum 0 has no registered stake: LIVE_INSTANCE points at an incomplete AVS stack"
+        );
+
         OperatorStateRetriever retriever = new OperatorStateRetriever();
-        GuardedVaultExposed vault = new GuardedVaultExposed(AVS, BLS_CHECKER, 5000);
+        GuardedVaultExposed vault = new GuardedVaultExposed(w.avs, w.checker, 5000);
 
         // A tiny well-formed diff (the analyzer would produce this in production).
         address d0 = address(0xD0);
@@ -64,7 +75,7 @@ contract SepoliaSubmitTest is Test {
         BN254.G1Point memory sigma; // zero — the seam
         BN254.G2Point memory apkG2; // zero — the seam
         IBLSSignatureCheckerTypes.NonSignerStakesAndSignature memory nss =
-            LiveSubmission.buildAllSigners(REGISTRY_COORDINATOR, retriever, quorumNumbers, refBlock, sigma, apkG2);
+            LiveSubmission.buildAllSigners(registryCoordinator, retriever, quorumNumbers, refBlock, sigma, apkG2);
 
         // The on-chain-derived fields are real and non-trivial.
         assertEq(nss.nonSignerPubkeys.length, 0, "no non-signers");
