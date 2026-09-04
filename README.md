@@ -39,7 +39,7 @@ A consumer contract:
    *spec*; in production operators reproduce its result off-chain);
 3. operators submit the resulting `(StateUpdateType[], bytes[])` diff through `verifyAndUpdate`.
 
-## The three examples
+## The four examples
 
 All share the one property Gas Killer actually rewards: **expensive computation that collapses to a
 small storage diff.** Cost scales with compute; settlement scales with bytes changed.
@@ -49,6 +49,7 @@ small storage diff.** Cost scales with compute; settlement scales with bytes cha
 | [`OnchainLife`](./src/examples/onchain-life/OnchainLife.sol) | Conway's Game of Life on a 64×64 board, fully on-chain. One generation costs 16.9M gas; two exceed a block. | packed-bitmap `STORE`, `LOG2` |
 | [`GuardedVault`](./src/examples/guarded-vault/GuardedVault.sol) | Vault that re-validates an expensive **global invariant** on every transition — proven off-chain *before* the state lands | mapping `STORE`, `LOG1`, invariant guard |
 | [`Quicksort`](./src/examples/algo/sort/Quicksort.sol) + [`SortedOracle`](./src/examples/sorted-oracle/SortedOracle.sol) | A `pure` sort that touches no storage at all, and the oracle that settles its result as six words. Ordered input drives it to O(N²) — 400 values exceed a block. | zero-op `pure` compute, 6× `STORE`, `LOG2`, commitment + calldata witness |
+| [`Lzss`](./src/examples/algo/compress/Lzss.sol) + [`CompressedArchive`](./src/examples/compressed-archive/CompressedArchive.sol) | Brute-force LZSS compression. Compressing is O(N²) and leaves a 30M block at ~390 bytes; expanding is O(N) and stays on-chain. The archive keeps every blob compressed. | zero-op `pure` compute, `bytes`-in-mapping `STORE`, `LOG2`, a diff that **shrinks** with the output |
 
 ### Measured gas → [**full report: `docs/GAS-REPORT.md`**](./docs/GAS-REPORT.md)
 
@@ -104,6 +105,50 @@ on-chain check is cheaper. Two further caveats stated up front: this settle cons
 invariant is reducible to an `O(K)` check over the touched accounts (also cheaper), and GuardedVault
 therefore illustrates the *pattern* rather than proving this invariant needs it. See the report.
 
+**Lzss + CompressedArchive — the one example whose diff is *not* flat, on purpose:**
+
+The other three collapse unbounded work into a fixed-size diff. This one collapses it into a *smaller*
+one. What settles is the compressed blob itself, so the algorithm's output **is** the settlement cost and
+a better ratio is directly a cheaper `verifyAndUpdate`. The baseline is therefore not "compress it
+on-chain" — that isn't an option, it's a wall at ~390 bytes — but **"store it raw", which is what
+everyone does today**:
+
+| raw bytes | store raw (no compression) | Gas Killer settlement | factor |
+|---|---|---|---|
+| 128 | 162k | 351k | **0.46× — a loss** |
+| 256 | 231k | 397k | **0.58× — a loss** |
+| 512 | 388k | 397k | ~1× (break-even) |
+| 1,280 | 861k | 397k | **2.2×** |
+
+Settlement is flat across that range only because these blobs compress to under 32 bytes and Solidity
+packs a short `bytes` into one slot; past that it grows with the compressed size, not the raw size. The
+1,280-byte blob stores as **48 bytes** — and compressing it on-chain would cost **32.3M gas**, over a
+block, to save that.
+
+**Below ~520 bytes, don't use Gas Killer for this** — the ~300k settlement floor dominates and storing the
+bytes raw is cheaper. This crossover is the latest of the four because the baseline it has to beat is a
+plain `sstore` loop rather than a super-linear computation.
+
+> **And that baseline is the friendly one.** Everything above is measured against `sstore` at ~690 gas per
+> byte, which is what a contract pays for a `bytes` in storage. Projects that actually put blobs on chain —
+> Nouns' art descriptor, Art Blocks' scripts, EthFS — use **SSTORE2**, storing data as contract bytecode at
+> ~200 gas per byte instead. Against *that*, this example needs better than 3.45× compression merely to
+> break even, and at a realistic 3× it is a loss at every size. `CompressedArchive` settles into ordinary
+> storage slots, so it inherits the worse side of that trade.
+>
+> The fix is a `CREATE` op rather than a doc edit: a Gas Killer payload can carry one, so an operator could
+> settle the compressed blob *as bytecode* and pay ~200 gas/byte on both sides. That variant is not built
+> here. Read this example as a demonstration of the mechanism — pure compute settling for zero, and a diff
+> that shrinks with the algorithm's output — rather than as a deployable win over a well-optimised
+> incumbent.
+
+The sharper number here is about *direction*, not size. Compression and decompression are the same
+transformation read two ways, and they are not the same price: at 1,280 bytes compressing costs **32.3M
+gas** and expanding costs **448k** — a **72×** asymmetry. The expensive direction moves off-chain; the
+cheap one stays, at a steady ~343 gas per expanded byte. That is what keeps a settled blob *readable*
+rather than merely small, and it is the difference between compressing for the chain and compressing
+somewhere else and hoping nobody needs the data back.
+
 > **The honest limit.** A bulk airdrop and a sorted leaderboard were also built here and **removed** after
 > measuring as *losses* (25.2M → 30.7M and 24.5M → 36.8M). Both write a diff proportional to the work, so
 > there's no compute to collapse and you pay quorum overhead on top. If your diff scales with your
@@ -115,6 +160,14 @@ therefore illustrates the *pattern* rather than proving this invariant needs it.
 > order plus four order statistics — six words, whatever N is. Identical algorithm, opposite verdict,
 > decided entirely by what you choose to write. If you need the full order on-chain, hand it back as a
 > calldata witness and check it against the commitment (`isCommittedOrder`) rather than storing it.
+>
+> **`CompressedArchive` writes an O(N) diff and is still a win — which sharpens the rule rather than
+> breaking it.** Its diff is proportional to the blob, so by the sentence above it should be the wrong
+> tool. It isn't, because the diff is proportional to the *compressed* blob while the baseline writes the
+> *raw* one: the settled write is strictly smaller than the write you were going to make anyway, and the
+> O(N²) search that shrank it costs nothing. The precise rule is not "your diff must be flat" — it is
+> **your diff must be smaller than what you'd have written without Gas Killer.** Flat is simply the
+> easiest way to achieve that, and it is how the other three do it.
 
 ## Quickstart
 
@@ -178,7 +231,7 @@ Extraction belongs to [gas-analyzer](https://github.com/gas-killer/gas-analyzer)
 service repo, whose [`scripts/examples`][harness] harness builds a manifest of these contracts, deploys
 them against a running AVS, and drives tasks through the router: the analyzer produces the diff, a real
 operator quorum signs it, and `verifyAndUpdate` lands it on chain. That manifest names `OnchainLife`
-and `GuardedVault`; `SortedOracle` is not in it yet.
+and `GuardedVault`; `SortedOracle` and `CompressedArchive` are not in it yet.
 
 ## Live on Sepolia testnet
 
@@ -228,13 +281,14 @@ operators.
 
 ### Status — what is and isn't verified
 
-- ✅ **On-chain application is proven** for all three examples: the real SDK applies the operator's
+- ✅ **On-chain application is proven** for all four examples: the real SDK applies the operator's
   diff via `verifyAndUpdate`, reproducing naive state and events byte-for-byte (`test/examples/`,
   offline, with a hand-built diff and a mocked quorum).
 - ✅ **On-chain wiring and settlement** are verified from the service repo: its `scripts/examples`
   harness deploys the examples its manifest names — `OnchainLife` and `GuardedVault` — against a
   running AVS and asserts `stateTransitionCount` advances, which is a real `BLSSignatureChecker`
-  accepting a real aggregated signature. `SortedOracle` is not in that manifest yet.
+  accepting a real aggregated signature. `SortedOracle` and `CompressedArchive` are not in that
+  manifest yet.
 - ⚠️ **No end-to-end run through the hosted service is currently reproducible**, because the
   credential documented previously is retired and we hold no replacement API key. Earlier rounds
   *did* land under the old broadcasting model (e.g. `stateTransitionCount` 0 → 1 on GuardedVault),
@@ -254,6 +308,17 @@ forge inspect src/examples/onchain-life/OnchainLife.sol:OnchainLife storage-layo
 `dynamicArrayLengthSlot`, bit-packing helpers), and its self-test round-trips each helper against real
 Solidity layout with `vm.store` / `vm.load`. In your own tests, verify a computed slot with
 `vm.load(addr, slot)` before trusting it.
+
+**Settling a `bytes` or `string` needs more than a slot number**, because Solidity encodes it two
+different ways: under 32 bytes it packs the data into the header slot with `length * 2` in the low byte,
+and from 32 bytes the header holds `length * 2 + 1` while the data moves to `keccak256(headerSlot)` and
+runs contiguously, with the tail of the final word zero-filled. `bytesStoreOps(headerSlot, data)` emits
+the whole set of `STORE` ops for either form — see `CompressedArchive`, which settles a compressed blob
+this way — with `isShortBytes`, `shortBytesHeader`, `longBytesHeader`, `bytesDataSlot`, `bytesDataWord`
+and `bytesSlotCount` available if you need the pieces. One caveat those helpers do **not** cover:
+overwriting a longer `bytes` with a shorter one also has to zero the slots that fall off the end, which
+Solidity does on assignment and a diff must reproduce explicitly. Writing each value to a fresh key
+avoids the problem entirely, which is why the archive is append-only.
 
 ## Layout
 

@@ -12,11 +12,15 @@ import {StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 ///        m      -> slot 1
 ///        arr    -> slot 2 (length at slot 2, data at keccak256(2))
 ///        words  -> slots 3..18 (fixed array, contiguous)
+///        blob   -> slot 19 (header at 19, long-form data at keccak256(19))
+///        blobs  -> slot 20 (per-key header at keccak256(key, 20))
 contract SlotProbe {
     uint256 public a;
     mapping(address => uint256) public m;
     uint256[] public arr;
     uint256[16] public words;
+    bytes public blob;
+    mapping(uint256 => bytes) public blobs;
 }
 
 /// @title OffchainPayloadBuilderTest
@@ -61,6 +65,121 @@ contract OffchainPayloadBuilderTest is Test {
         // pattern OnchainLife relies on (with its board declared first, so word w lives at slot w).
         vm.store(address(probe), OffchainPayloadBuilder.simpleSlot(3 + 5), bytes32(uint256(123)));
         assertEq(probe.words(5), 123, "fixed-array element 5 should be at base+5");
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*                       `bytes` in storage                            */
+    /* ------------------------------------------------------------------ */
+
+    /// @notice A `bytes` shorter than 32 packs into its header slot; the helper must reproduce the
+    ///         exact word Solidity writes, data left-aligned with `length * 2` in the low byte.
+    function test_shortBytesHeader_matchesSolidity() public {
+        bytes memory value = hex"0badc0de";
+        vm.store(address(probe), bytes32(uint256(19)), OffchainPayloadBuilder.shortBytesHeader(value));
+        assertEq(probe.blob(), value, "shortBytesHeader should reproduce the packed short form");
+    }
+
+    /// @notice An empty `bytes` is an all-zero header.
+    function test_shortBytesHeader_empty() public pure {
+        assertEq(OffchainPayloadBuilder.shortBytesHeader(""), bytes32(0));
+    }
+
+    /// @notice 31 bytes is the largest short form; 32 crosses into the long form.
+    function test_shortBytesHeader_atBoundary() public {
+        bytes memory value = new bytes(31);
+        for (uint256 i = 0; i < 31; i++) {
+            value[i] = bytes1(uint8(i + 1));
+        }
+        vm.store(address(probe), bytes32(uint256(19)), OffchainPayloadBuilder.shortBytesHeader(value));
+        assertEq(probe.blob(), value, "31 bytes should still be the short form");
+        assertTrue(OffchainPayloadBuilder.isShortBytes(31), "31 is short");
+        assertFalse(OffchainPayloadBuilder.isShortBytes(32), "32 is long");
+    }
+
+    /// @notice A `bytes` of 32 or more uses `length * 2 + 1` in the header and keccak-derived data
+    ///         slots; writing both through the helpers must be readable as a normal Solidity value.
+    function test_longBytes_headerAndDataSlots_matchSolidity() public {
+        bytes memory value = new bytes(70);
+        for (uint256 i = 0; i < value.length; i++) {
+            value[i] = bytes1(uint8(i + 1));
+        }
+
+        bytes32 headerSlot = bytes32(uint256(19));
+        vm.store(address(probe), headerSlot, OffchainPayloadBuilder.longBytesHeader(value.length));
+        for (uint256 i = 0; i < 3; i++) {
+            vm.store(
+                address(probe),
+                OffchainPayloadBuilder.bytesDataSlot(headerSlot, i),
+                OffchainPayloadBuilder.bytesDataWord(value, i)
+            );
+        }
+
+        assertEq(probe.blob(), value, "long-form helpers should reproduce Solidity's layout");
+    }
+
+    /// @notice The same helpers, aimed at a `bytes` inside a mapping — the shape `CompressedArchive`
+    ///         settles. The header slot is the mapping slot, and data hangs off that.
+    function test_longBytes_insideMapping_matchesSolidity() public {
+        bytes memory value = new bytes(100);
+        for (uint256 i = 0; i < value.length; i++) {
+            value[i] = bytes1(uint8(255 - i));
+        }
+
+        bytes32 headerSlot = OffchainPayloadBuilder.mappingSlot(uint256(7), 20);
+        vm.store(address(probe), headerSlot, OffchainPayloadBuilder.longBytesHeader(value.length));
+        for (uint256 i = 0; i < 4; i++) {
+            vm.store(
+                address(probe),
+                OffchainPayloadBuilder.bytesDataSlot(headerSlot, i),
+                OffchainPayloadBuilder.bytesDataWord(value, i)
+            );
+        }
+
+        assertEq(probe.blobs(7), value, "mapping(uint256 => bytes) slot math should match Solidity");
+    }
+
+    /// @notice The final word of a long `bytes` is zero-filled past the end of the data, matching
+    ///         what Solidity leaves in that slot.
+    function test_bytesDataWord_zeroFillsTail() public pure {
+        bytes memory value = new bytes(33);
+        value[32] = 0xff;
+        bytes32 last = OffchainPayloadBuilder.bytesDataWord(value, 1);
+        assertEq(last, bytes32(uint256(0xff) << 248), "tail past the data must be zero");
+    }
+
+    /// @notice `bytesStoreOps` emits header-then-data in slot order, and applying it verbatim
+    ///         reproduces the value — this is the helper the archive's diff builder relies on.
+    function test_bytesStoreOps_roundTripsThroughStorage() public {
+        bytes memory value = new bytes(65);
+        for (uint256 i = 0; i < value.length; i++) {
+            value[i] = bytes1(uint8(i * 3 + 1));
+        }
+
+        bytes32 headerSlot = OffchainPayloadBuilder.mappingSlot(uint256(1), 20);
+        OffchainPayloadBuilder.Op[] memory ops = OffchainPayloadBuilder.bytesStoreOps(headerSlot, value);
+
+        assertEq(ops.length, OffchainPayloadBuilder.bytesSlotCount(value.length), "op count vs slot count");
+        assertEq(ops.length, 4, "65 bytes is a header plus three data words");
+
+        for (uint256 i = 0; i < ops.length; i++) {
+            (bytes32 slot, bytes32 word) = abi.decode(ops[i].arg, (bytes32, bytes32));
+            vm.store(address(probe), slot, word);
+        }
+
+        assertEq(probe.blobs(1), value, "applying bytesStoreOps should reproduce the value");
+    }
+
+    /// @notice A short value produces exactly one op, and it round-trips too.
+    function test_bytesStoreOps_shortForm() public {
+        bytes memory value = hex"deadbeefcafe";
+        bytes32 headerSlot = OffchainPayloadBuilder.mappingSlot(uint256(2), 20);
+        OffchainPayloadBuilder.Op[] memory ops = OffchainPayloadBuilder.bytesStoreOps(headerSlot, value);
+
+        assertEq(ops.length, 1, "a short bytes is a single header store");
+        (bytes32 slot, bytes32 word) = abi.decode(ops[0].arg, (bytes32, bytes32));
+        vm.store(address(probe), slot, word);
+
+        assertEq(probe.blobs(2), value, "short-form ops should reproduce the value");
     }
 
     function test_setBit_clearBit() public pure {
