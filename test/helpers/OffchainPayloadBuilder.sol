@@ -170,6 +170,84 @@ library OffchainPayloadBuilder {
     }
 
     /* --------------------------------------------------------------------- */
+    /*                       `bytes` / `string` in storage                    */
+    /* --------------------------------------------------------------------- */
+
+    /// @notice Whether a `bytes` value of `length` uses the short (in-header) storage form.
+    /// @dev Solidity stores a `bytes` of fewer than 32 bytes entirely inside its header slot; from
+    ///      32 bytes it stores only a length marker there and moves the data to a keccak-derived
+    ///      region. The two forms are encoded differently, so a diff builder must branch on this.
+    function isShortBytes(uint256 length) internal pure returns (bool) {
+        return length < 32;
+    }
+
+    /// @notice Header word for a short (`length < 32`) `bytes` value.
+    /// @dev The data sits left-aligned in the high bytes and the lowest byte holds `length * 2`,
+    ///      which is how the low bit distinguishes the short form from the long one.
+    function shortBytesHeader(bytes memory data) internal pure returns (bytes32 header) {
+        uint256 packed;
+        for (uint256 i = 0; i < data.length; i++) {
+            packed |= uint256(uint8(data[i])) << (8 * (31 - i));
+        }
+        return bytes32(packed | (data.length * 2));
+    }
+
+    /// @notice Header word for a long (`length >= 32`) `bytes` value: `length * 2 + 1`.
+    function longBytesHeader(uint256 length) internal pure returns (bytes32) {
+        return bytes32(length * 2 + 1);
+    }
+
+    /// @notice Slot of the `wordIndex`-th 32-byte word of a long `bytes` whose header is at `headerSlot`.
+    /// @dev Data begins at `keccak256(headerSlot)` and runs contiguously. `headerSlot` is a slot
+    ///      *number*, so for a `mapping(K => bytes)` it is `mappingSlot(key, declSlot)` rather than
+    ///      the mapping's declaration slot.
+    function bytesDataSlot(bytes32 headerSlot, uint256 wordIndex) internal pure returns (bytes32) {
+        return bytes32(uint256(keccak256(abi.encode(headerSlot))) + wordIndex);
+    }
+
+    /// @notice The `wordIndex`-th 32-byte word of `data`, right-padded with zeros past the end.
+    /// @dev Solidity zero-fills the tail of the final word, so a diff that wrote residual bytes
+    ///      there would not match the state the naive function produces.
+    function bytesDataWord(bytes memory data, uint256 wordIndex) internal pure returns (bytes32 word) {
+        uint256 start = wordIndex * 32;
+        uint256 packed;
+        for (uint256 i = 0; i < 32; i++) {
+            uint256 at = start + i;
+            if (at >= data.length) break;
+            packed |= uint256(uint8(data[at])) << (8 * (31 - i));
+        }
+        return bytes32(packed);
+    }
+
+    /// @notice Number of slots a `bytes` of `length` occupies, header included.
+    function bytesSlotCount(uint256 length) internal pure returns (uint256) {
+        if (isShortBytes(length)) return 1;
+        return 1 + (length + 31) / 32;
+    }
+
+    /// @notice Every STORE op needed to write `data` to the `bytes` variable headed at `headerSlot`.
+    /// @dev Produces the header word followed by the data words, in slot order, so the result can be
+    ///      concatenated into a larger payload. Only valid when the target currently holds a shorter
+    ///      or empty value: replacing a longer `bytes` also requires zeroing the slots that fall off
+    ///      the end, which Solidity does on assignment and which these ops do not cover.
+    function bytesStoreOps(bytes32 headerSlot, bytes memory data) internal pure returns (Op[] memory ops) {
+        uint256 length = data.length;
+
+        if (isShortBytes(length)) {
+            ops = new Op[](1);
+            ops[0] = Op(StateUpdateType.STORE, encodeStore(headerSlot, shortBytesHeader(data)));
+            return ops;
+        }
+
+        uint256 words = (length + 31) / 32;
+        ops = new Op[](words + 1);
+        ops[0] = Op(StateUpdateType.STORE, encodeStore(headerSlot, longBytesHeader(length)));
+        for (uint256 i = 0; i < words; i++) {
+            ops[i + 1] = Op(StateUpdateType.STORE, encodeStore(bytesDataSlot(headerSlot, i), bytesDataWord(data, i)));
+        }
+    }
+
+    /* --------------------------------------------------------------------- */
     /*                          Word / bit packing                           */
     /* --------------------------------------------------------------------- */
 
