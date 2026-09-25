@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {OffchainPayloadBuilder} from "./helpers/OffchainPayloadBuilder.sol";
 import {OnchainLifeExposed} from "./exposed/OnchainLifeExposed.sol";
-import {MockBLSSignatureChecker} from "./mocks/MockBLSSignatureChecker.sol";
+import {MockSchnorrStakeRegistry} from "./mocks/MockSchnorrStakeRegistry.sol";
 import {StateChangeHandlerLib, StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 
 /// @title CanonicalLogEncoding
@@ -35,7 +35,7 @@ contract CanonicalLogEncodingTest is Test {
 
     function setUp() public {
         uint256[16] memory seed;
-        consumer = new OnchainLifeExposed(makeAddr("avs"), address(new MockBLSSignatureChecker()), seed);
+        consumer = new OnchainLifeExposed(makeAddr("avs"), address(new MockSchnorrStakeRegistry()), seed);
     }
 
     /* ------------------------------------------------------------------ */

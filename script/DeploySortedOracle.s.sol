@@ -7,7 +7,7 @@ import {SortedOracle} from "../src/examples/sorted-oracle/SortedOracle.sol";
 
 /// @notice Deploy SortedOracle pre-seeded with a batch of observations, so `commit()` is callable
 ///         immediately after deployment.
-/// @dev Env: AVS_ADDRESS (optional, demo default), SIG_CHECKER_ADDRESS (optional; mock if unset),
+/// @dev Env: AVS_ADDRESS (optional, demo default), SCHNORR_STAKE_REGISTRY_ADDRESS (optional; mock if unset),
 ///      OBSERVATIONS (optional, default 64) — how many observations to seed. Seeding happens in the
 ///      deploy transaction, so keep it modest; the point of the example is that `commit()` reads them
 ///      all back and sorts them, which is what an operator runs off-chain.
@@ -17,15 +17,15 @@ contract DeploySortedOracle is DeployBase {
         uint256[] memory seedValues = _seedObservations(count);
 
         vm.startBroadcast();
-        address checker = _resolveChecker();
-        SortedOracle deployed = new SortedOracle(_avs(), checker);
+        address registry = _resolveRegistry();
+        SortedOracle deployed = new SortedOracle(_avs(), registry);
         deployed.reportBatch(seedValues);
         vm.stopBroadcast();
 
         oracle = address(deployed);
         console.log("SortedOracle:", oracle);
         console.log("AVS:", _avs());
-        console.log("BLS checker:", checker);
+        console.log("Schnorr stake registry:", registry);
         console.log("Seeded observations:", count);
     }
 

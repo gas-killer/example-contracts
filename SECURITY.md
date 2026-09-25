@@ -13,7 +13,11 @@ When an operator submits a storage diff, `GasKillerSDK.verifyAndUpdate` checks o
    default 300 blocks);
 2. the transition index is the next one (`transitionIndex + 1 == stateTransitionCount()`);
 3. the message hash equals `sha256(transitionIndex, address(this), targetFunction, storageUpdates)`;
-4. **≥ 66 % of the relevant EigenLayer quorum stake signed that hash** (BLS aggregate signature);
+4. **the `SchnorrStakeRegistry` accepts one aggregate Schnorr signature over that hash**: the reference
+   block is at or after the registry's last operator-set change, the listed non-signers are registered
+   operators, the remaining signers hold at least the registry's `thresholdNum / thresholdDen` share of
+   total registered weight (fixed per registry deployment, e.g. 2/3), and the signature verifies against
+   the aggregate key minus the non-signers' keys;
 
 …and then it applies the diff with raw `sstore` / `call` / `log`.
 
@@ -24,10 +28,11 @@ That is the **entire** check. In particular:
 - **There is no fraud proof, no challenge window, and no bisection protocol.** A submission is final and
   instant once a quorum signs.
 - **There is no slashing logic in the SDK or the AVS contracts.** Accountability rests entirely on the
-  off-chain EigenLayer operator set and whatever slashing the AVS configures out of band.
+  off-chain operator set and whatever slashing the AVS configures out of band.
 
-So the security is **crypto-economic attestation under an honest-supermajority assumption**: if ≥ 66 %
-of staked operators sign a wrong diff, the chain applies it and nothing on-chain can prove it was wrong.
+So the security is **crypto-economic attestation under an honest-supermajority assumption**: if operators
+holding the registry's stake threshold sign a wrong diff, the chain applies it and nothing on-chain can
+prove it was wrong.
 This is a different (weaker, in the objective sense) guarantee than an optimistic rollup's fraud proofs
 or a validity rollup's zk proofs.
 
@@ -40,7 +45,7 @@ That is only partly true. There are three distinct boundaries:
 |---|---|---|
 | On-chain re-execution for **objective slashing** | It *would* be (single-shot re-execution must fit a block; bisection could lift it) | **Not implemented** — there are no on-chain fraud proofs at all |
 | **Off-chain simulation** by operators | **Yes under the default profile** (`GK_SIM_PROFILE=chain`): the analyzer simulates with `tx.gas_limit = block.gas_limit`, so a function that out-of-gases at 30M can't be simulated/diffed either. `GK_SIM_PROFILE=unbounded` lifts that to `1 << 40` gas (~24,000× a block) and instead prices the *payload* against EIP-7825's 2^24 cap — see `gas-analyzer/docs/UNBOUNDED_MODE.md` | `chain` is the default and **`unbounded` is explicitly not production-ready** — see the note below |
-| On-chain **diff application** | **Always** — applying *K* storage writes costs ≈ *K × 22k* gas plus a ~250k fixed floor, so a large diff must be chunked across multiple `verifyAndUpdate` calls | Hard, permanent |
+| On-chain **diff application** | **Always** — applying *K* storage writes costs ≈ *K × 22k* gas plus a fixed verification floor, so a large diff must be chunked across multiple `verifyAndUpdate` calls | Hard, permanent |
 
 ### What `GK_SIM_PROFILE=unbounded` actually requires
 
@@ -87,17 +92,17 @@ These examples deliberately cover both:
   board at "generation 1,000,000" — a computation that could never run on-chain and that today's
   analyzer (block-gas-limited) could not even simulate. The apply is still ~16 words. The
   `test_trustOnly_unboundedGenerationIsCheapButUnverified` test demonstrates this **and warns**: its
-  correctness rests *entirely* on the 66 % quorum being honest. There is no objective recourse if it is
+  correctness rests *entirely* on the signing quorum being honest. There is no objective recourse if it is
   not.
 
 - **Invariant guard (validation ≫ diff).** `GuardedVault` re-validates an expensive O(N) global
   invariant (conservation + solvency + per-depositor concentration cap) on every state transition.
-  Honest operators run `checkInvariant()` on the *simulated post-state* before BLS-signing, so the 66%
-  quorum is an attestation that *this transition preserves the invariant* — a whole class of exploits
+  Honest operators run `checkInvariant()` on the *simulated post-state* before signing, so a quorum
+  signature is an attestation that *this transition preserves the invariant* — a whole class of exploits
   (anything that breaks a global invariant the contract can't afford to re-check on-chain) can never
   land. **But this inherits the trust model above:** there is no on-chain re-check, so the guarantee is
-  only as strong as the honest-supermajority assumption. A ≥66% malicious quorum could sign an
-  invariant-violating diff and nothing on-chain would stop it. The on-chain `checkInvariant()` exists
+  only as strong as the honest-supermajority assumption. A malicious quorum at the stake threshold could
+  sign an invariant-violating diff and nothing on-chain would stop it. The on-chain `checkInvariant()` exists
   as the spec/oracle and to *prove the guard is load-bearing* (the tests apply a bad diff and show the
   state is then detectably corrupt); production `verifyAndUpdate` does not call it. Note also that an
   invariant is only as complete as the state it enumerates: `checkInvariant` sums only addresses in
@@ -129,7 +134,7 @@ These examples deliberately cover both:
 ## Marketing vs. code
 
 Gas Killer's landing page advertises "objective on-chain slashing" and "infinite computation? no
-problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@7e4289c`), the code backs
+problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@8b57a74`), the code backs
 **neither**: there is no on-chain slashing or fraud proof, and the default simulation profile
 (`GK_SIM_PROFILE=chain`) stays within a block's gas. A `1 << 40`-gas profile exists but is opt-in, still
 bounded by what a *payload* can carry, and explicitly not production-ready — see the profile note above.
@@ -137,19 +142,21 @@ Treat the unbounded-computation framing as the *trust-only* regime above, not as
 
 ## Benchmark honesty
 
-- Apply-diff gas in the tests is measured against `MockBLSSignatureChecker`, which does **no**
-  cryptography. Those numbers therefore **exclude** the fixed cost of real BLS quorum verification.
-  Add `BLS_VERIFY_FIXED_GAS` (~250k, seeded from the analyzer's `TURETZKY_UPPER_GAS_LIMIT`) for a
-  production estimate. It is constant in N, so it does not change the shape of any comparison.
+- Apply-diff gas in the tests is measured against `MockSchnorrStakeRegistry`, which does **no**
+  cryptography. Those numbers therefore **exclude** the fixed cost of real quorum verification.
+  Add `QUORUM_VERIFY_FIXED_GAS` (~250k, seeded from the analyzer's `TURETZKY_UPPER_GAS_LIMIT` when the
+  SDK verified BLS) for a production estimate. Aggregate Schnorr verification is far cheaper (~17k cold at
+  full participation, per the SDK), so this is a conservative ceiling. It is constant in N, so it does not
+  change the shape of any comparison.
 - Gas is measured with `gasleft()` deltas around the external call (deterministic), not the
   `vm.startSnapshotGas` cheatcode, which returned unreliable numbers on the pinned Foundry nightly.
 
 ## The live Sepolia deployment
 
-A real Gas Killer AVS stack exists on Sepolia (a live `BLSSignatureChecker` + `RegistryCoordinator` +
-`StakeRegistry` with recorded operator stake). It is **ephemeral test infrastructure** from earlier
-deploy runs — each `ArraySummation` instance carries its own checker and coordinator, and several are
-mis-wired to the operator-state-retriever and revert — **not a hosted service with operators signing
+A real Gas Killer AVS stack exists on Sepolia, with operators registered against a
+`SchnorrStakeRegistry`. It is **ephemeral test infrastructure** that is redeployed over time — a
+redeployment provisions a new registry, and targets wired to the old one (including anything wired to
+an earlier BLS-era `BLSSignatureChecker`) cannot settle — **not a hosted service with operators signing
 on demand**.
 
 Nothing in this repo tests against it. Settlement against a real operator set is verified from the
@@ -163,7 +170,7 @@ the Sepolia addresses as a testnet integration target, not a production SLA.
 
 Both ends of the production pipeline are stand-ins here. Diffs are hand-built by
 `test/helpers/OffchainPayloadBuilder.sol` rather than extracted from a trace, and they are applied
-through a `MockBLSSignatureChecker` that does no cryptography. So a green `forge test` establishes the
+through a `MockSchnorrStakeRegistry` that does no cryptography. So a green `forge test` establishes the
 examples' *semantics* — applying the operator's diff reproduces the naive function's storage and events
 byte for byte — and nothing about extraction or signing.
 

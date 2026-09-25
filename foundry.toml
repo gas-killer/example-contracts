@@ -5,9 +5,9 @@ libs = ["lib"]
 test = "test"
 script = "script"
 
-# The EigenLayer middleware that GasKillerSDK depends on pins solc 0.8.27, so that
-# is the effective floor for the whole project. Keep via_ir off: eigenlayer-contracts
-# is large and via_ir would balloon compile time for no benefit here.
+# GasKillerSDK's sources require solc ^0.8.27, so that is the effective floor for the
+# whole project. Keep via_ir off: the naive examples are compiled for measurement, and
+# via_ir would change the codegen the gas figures in docs/GAS-REPORT.md were taken with.
 solc_version = "0.8.27"
 via_ir = false
 optimizer = true

@@ -17,7 +17,7 @@ jobs:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
-          # MANDATORY: the SDK submodule pulls in eigenlayer-middleware -> eigenlayer-contracts -> OZ.
+          # MANDATORY: the SDK submodule pulls in OpenZeppelin and forge-std.
           submodules: recursive
 
       - name: Install Foundry

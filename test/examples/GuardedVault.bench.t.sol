@@ -103,12 +103,12 @@ contract GuardedVaultBench is VaultTestKit {
             uint256 g1 = gasleft();
             applyVault.applyDiff(diff);
             uint256 applied = g1 - gasleft();
-            uint256 prod = applied + BLS_VERIFY_FIXED_GAS;
+            uint256 prod = applied + QUORUM_VERIFY_FIXED_GAS;
 
             emit log_named_uint("depositors               ", n);
             emit log_named_uint("  naive guarded settle   ", naive);
             emit log_named_uint("  apply-diff gas         ", applied);
-            emit log_named_uint("  apply + BLS (prod est) ", prod);
+            emit log_named_uint("  apply + verify (prod est) ", prod);
             emit log_named_uint("  savings factor (naive/prod)", naive / prod);
 
             if (i == 0) firstApply = applied;
@@ -149,7 +149,7 @@ contract GuardedVaultBench is VaultTestKit {
 
         emit log_named_uint("naive guarded settle gas    ", naive);
         emit log_named_uint("apply diff gas              ", applyGas);
-        emit log_named_uint("apply + BLS_VERIFY (prod)   ", applyGas + BLS_VERIFY_FIXED_GAS);
+        emit log_named_uint("apply + QUORUM_VERIFY (prod)   ", applyGas + QUORUM_VERIFY_FIXED_GAS);
 
         assertGt(naive, MAINNET_BLOCK_GAS, "naive guarded settle exceeds a 30M block at 8000 depositors");
         assertLt(applyGas, 200_000, "apply-diff is a few thousand gas regardless of depositor count");

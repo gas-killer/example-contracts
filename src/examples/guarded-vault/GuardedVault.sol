@@ -10,8 +10,9 @@ import {GasKillerSDK} from "gas-killer-sdk/GasKillerSDK.sol";
 ///
 ///         In production, a keeper proposes a `settle` (a batch redistribution of shares). Operators
 ///         SIMULATE it off-chain, then run `checkInvariant()` over the resulting post-state. Honest
-///         operators only BLS-sign a diff whose post-state passes the invariant; the 66% quorum is
-///         therefore an attestation that *this state transition preserves the invariant*. The diff
+///         operators only sign a diff whose post-state passes the invariant; an aggregate Schnorr
+///         signature carrying the registry's stake threshold is therefore an attestation that *this
+///         state transition preserves the invariant*. The diff
 ///         then lands via `verifyAndUpdate`, which does NOT re-run the O(N) invariant on-chain — that
 ///         cost was paid once, off-chain. A whole class of exploits (anything that breaks a global
 ///         invariant the contract can't afford to re-check) becomes impossible to land.
@@ -54,9 +55,13 @@ contract GuardedVault is GasKillerSDK {
     error InsolventVault(uint256 assets, uint256 sharesOutstanding);
     error ConcentrationExceeded(address account, uint256 heldShares, uint256 capShares);
 
-    constructor(address _avsAddress, address _blsSigChecker, uint256 _maxConcentrationBps) {
+    /// @param _avsAddress AVS service-manager address this contract is scoped to.
+    /// @param _schnorrStakeRegistry Schnorr stake registry that verifies the aggregate quorum
+    ///        signature in `verifyAndUpdate`.
+    /// @param _maxConcentrationBps Max share of total supply a single depositor may hold, in bps.
+    constructor(address _avsAddress, address _schnorrStakeRegistry, uint256 _maxConcentrationBps) {
         _setAvsAddress(_avsAddress);
-        _setBlsSignatureChecker(_blsSigChecker);
+        _setSchnorrRegistry(_schnorrStakeRegistry);
         maxConcentrationBps = _maxConcentrationBps;
     }
 
@@ -103,8 +108,8 @@ contract GuardedVault is GasKillerSDK {
     ///      only as strong as the state it enumerates — a diff that writes `shares[x]` for an `x` never
     ///      added to `depositors[]` would escape the conservation sum (demonstrated in
     ///      `test_guard_limitation_phantomOnNonDepositorEscapes`). Honest operators never produce such a
-    ///      diff (`settle` only touches `isDepositor` users), so this matters only under a >=66%
-    ///      malicious quorum — which can already sign anything. The lesson: design the invariant to
+    ///      diff (`settle` only touches `isDepositor` users), so this matters only under a malicious
+    ///      quorum holding the registry's stake threshold — which can already sign anything. The lesson: design the invariant to
     ///      cover all reachable state and constrain operators to touch only enumerated slots.
     function checkInvariant() public view {
         uint256 sum;

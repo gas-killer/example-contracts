@@ -4,14 +4,14 @@ pragma solidity ^0.8.13;
 import {BenchmarkBase} from "../helpers/BenchmarkBase.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {OnchainLife} from "../../src/examples/onchain-life/OnchainLife.sol";
-import {MockBLSSignatureChecker} from "../mocks/MockBLSSignatureChecker.sol";
+import {MockSchnorrStakeRegistry} from "../mocks/MockSchnorrStakeRegistry.sol";
 import {OffchainPayloadBuilder} from "../helpers/OffchainPayloadBuilder.sol";
 import {StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
-import {IGasKillerSDK} from "gas-killer-sdk/interface/IGasKillerSDK.sol";
+import {GasKillerSDK} from "gas-killer-sdk/GasKillerSDK.sol";
 
 /// @notice Shared fixtures + diff-building helpers for the OnchainLife unit tests and benchmarks.
 abstract contract LifeTestKit is BenchmarkBase {
-    MockBLSSignatureChecker internal bls;
+    MockSchnorrStakeRegistry internal registry;
     address internal avs = makeAddr("avs");
 
     // Slot constants (verified against `forge inspect`): board words 0..15, generation 16.
@@ -19,7 +19,7 @@ abstract contract LifeTestKit is BenchmarkBase {
     bytes32 internal constant STEP_SIG = keccak256("GenerationStepped(uint256,bytes32)");
 
     function setUp() public virtual {
-        bls = _deployPassingBls();
+        registry = _deployPassingRegistry();
     }
 
     /// @dev Build the storage diff an operator would submit after `a` was stepped: STORE all 16 board
@@ -71,7 +71,7 @@ contract OnchainLifeTest is LifeTestKit {
         _set(seed, 10, 10);
         _set(seed, 11, 10);
         _set(seed, 12, 10);
-        OnchainLife life = new OnchainLife(avs, address(bls), seed);
+        OnchainLife life = new OnchainLife(avs, address(registry), seed);
 
         life.step(1);
 
@@ -86,7 +86,7 @@ contract OnchainLifeTest is LifeTestKit {
 
     function test_constructor_seedsBoardAndGeneration() public {
         uint256[16] memory seed = _randomSeed(1);
-        OnchainLife life = new OnchainLife(avs, address(bls), seed);
+        OnchainLife life = new OnchainLife(avs, address(registry), seed);
         assertEq(life.generation(), 0);
         uint256[16] memory got = life.getBoard();
         for (uint256 i = 0; i < 16; i++) {
@@ -100,14 +100,14 @@ contract OnchainLifeTest is LifeTestKit {
 
     /// @notice The heart of the demo: run the naive `step` on instance A, have the "operator" build
     ///         the resulting storage diff, apply it to a fresh instance B through the *full*
-    ///         `verifyAndUpdate` path (mock BLS), and assert A and B end up byte-identical — board
+    ///         `verifyAndUpdate` path (mock registry), and assert A and B end up byte-identical — board
     ///         words (via raw `vm.load`), generation, and the emitted log.
     function test_equivalence_naiveVsDiff() public {
         uint256[16] memory seed = _randomSeed(42);
         uint32 gens = 4;
 
-        OnchainLife a = new OnchainLife(avs, address(bls), seed);
-        OnchainLife b = new OnchainLife(avs, address(bls), seed);
+        OnchainLife a = new OnchainLife(avs, address(registry), seed);
+        OnchainLife b = new OnchainLife(avs, address(registry), seed);
 
         // --- A: run the naive spec, capturing its log. ---
         vm.recordLogs();
@@ -144,36 +144,35 @@ contract OnchainLifeTest is LifeTestKit {
         assertEq(abi.decode(aEvt.data, (bytes32)), a.boardHash(), "event boardHash should match board");
     }
 
-    /// @notice verifyAndUpdate must reject a diff when the signing quorum is below the 66% threshold.
+    /// @notice verifyAndUpdate must reject a diff when the signed weight is below the registry's threshold.
     function test_verifyAndUpdate_revertsBelowThreshold() public {
         uint256[16] memory seed = _randomSeed(7);
-        OnchainLife a = new OnchainLife(avs, address(bls), seed);
-        OnchainLife b = new OnchainLife(avs, address(bls), seed);
+        OnchainLife a = new OnchainLife(avs, address(registry), seed);
+        OnchainLife b = new OnchainLife(avs, address(registry), seed);
         a.step(2);
         bytes memory diff = _buildLifeDiff(a);
 
-        bls.setSignedBps(6599); // 65.99% < 66%
+        registry.setSignedWeight(registry.thresholdWeight() - 1); // one unit short of 2/3
         // Build the same plumbing _verify uses, then expect the revert on the call itself.
-        (bytes32 msgHash, bytes memory quorumNumbers, uint32 refBlock, uint256 transitionIndex) = _prepLocal(b, diff);
-        vm.expectRevert(IGasKillerSDK.InsufficientQuorumThreshold.selector);
-        b.verifyAndUpdate(
-            msgHash, quorumNumbers, refBlock, diff, transitionIndex, OnchainLife.step.selector, _emptySignature()
-        );
+        (bytes32 msgHash, uint32 refBlock, uint256 transitionIndex) = _prepVerify(b, diff, OnchainLife.step.selector);
+        (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        b.verifyAndUpdate(msgHash, refBlock, diff, transitionIndex, OnchainLife.step.selector, s, rAddr, nonSigners);
     }
 
-    /// @notice The exact 66% boundary must PASS: the SDK check is `signed*100 >= total*66`, so a quorum
-    ///         signing exactly 66% is sufficient. (With the mock's default million-unit total, 6600 bps
-    ///         is exactly 66% with no rounding loss.)
+    /// @notice The exact threshold boundary must PASS: the registry check is `signed*den >= total*num`,
+    ///         so a quorum signing exactly 2/3 of the weight is sufficient. (The mock's total is divisible
+    ///         by 3, so the boundary is exact with no rounding loss.)
     function test_verifyAndUpdate_passesAtExactThreshold() public {
         uint256[16] memory seed = _randomSeed(8);
-        OnchainLife a = new OnchainLife(avs, address(bls), seed);
-        OnchainLife b = new OnchainLife(avs, address(bls), seed);
+        OnchainLife a = new OnchainLife(avs, address(registry), seed);
+        OnchainLife b = new OnchainLife(avs, address(registry), seed);
         a.step(1);
         bytes memory diff = _buildLifeDiff(a);
 
-        bls.setSignedBps(6600); // exactly 66%
+        registry.setSignedWeight(registry.thresholdWeight()); // exactly 2/3
         _verify(b, diff, OnchainLife.step.selector); // must not revert
-        assertEq(b.generation(), a.generation(), "exactly-66% quorum applies the diff");
+        assertEq(b.generation(), a.generation(), "exactly-threshold quorum applies the diff");
     }
 
     /* ------------------------------------------------------------------ */
@@ -185,10 +184,10 @@ contract OnchainLifeTest is LifeTestKit {
     ///         million generations to check it (there is no fraud proof, no re-execution, no
     ///         bisection in Gas Killer). The apply cost is the same tiny ~16-word write as a single
     ///         step. This is the honest double-edge: you can offload truly unbounded compute, but its
-    ///         correctness rests ENTIRELY on the 66% operator quorum being honest.
+    ///         correctness rests ENTIRELY on the operator quorum being honest.
     function test_trustOnly_unboundedGenerationIsCheapButUnverified() public {
         uint256[16] memory seed = _randomSeed(99);
-        OnchainLife life = new OnchainLife(avs, address(bls), seed);
+        OnchainLife life = new OnchainLife(avs, address(registry), seed);
 
         // An arbitrary "far future" board + generation. An honest operator would have computed this
         // off-chain; the chain cannot tell the difference.
@@ -221,18 +220,6 @@ contract OnchainLifeTest is LifeTestKit {
     /* ------------------------------------------------------------------ */
     /*                              helpers                                 */
     /* ------------------------------------------------------------------ */
-
-    /// @dev Local copy of _prepVerify's outputs minus the signature (so we can drive a revert test).
-    function _prepLocal(OnchainLife c, bytes memory diff)
-        internal
-        returns (bytes32 msgHash, bytes memory quorumNumbers, uint32 refBlock, uint256 transitionIndex)
-    {
-        if (block.number == 0) vm.roll(1);
-        transitionIndex = c.stateTransitionCount();
-        msgHash = c.getMessageHash(transitionIndex, OnchainLife.step.selector, diff);
-        quorumNumbers = _quorumNumbers();
-        refBlock = uint32(block.number - 1);
-    }
 
     function _findStepLog(Vm.Log[] memory logs) internal pure returns (Vm.Log memory) {
         for (uint256 i = 0; i < logs.length; i++) {

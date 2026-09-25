@@ -5,14 +5,14 @@ import {BenchmarkBase} from "../helpers/BenchmarkBase.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {GuardedVault} from "../../src/examples/guarded-vault/GuardedVault.sol";
 import {GuardedVaultExposed} from "../exposed/GuardedVaultExposed.sol";
-import {MockBLSSignatureChecker} from "../mocks/MockBLSSignatureChecker.sol";
+import {MockSchnorrStakeRegistry} from "../mocks/MockSchnorrStakeRegistry.sol";
 import {OffchainPayloadBuilder} from "../helpers/OffchainPayloadBuilder.sol";
 import {StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
-import {IGasKillerSDK} from "gas-killer-sdk/interface/IGasKillerSDK.sol";
+import {GasKillerSDK} from "gas-killer-sdk/GasKillerSDK.sol";
 
 /// @notice Shared fixtures + helpers for the GuardedVault unit tests and benchmarks.
 abstract contract VaultTestKit is BenchmarkBase {
-    MockBLSSignatureChecker internal bls;
+    MockSchnorrStakeRegistry internal registry;
     address internal avs = makeAddr("avs");
     uint256 internal constant MAX_BPS = 5000; // 50% concentration cap
 
@@ -23,11 +23,11 @@ abstract contract VaultTestKit is BenchmarkBase {
     bytes32 internal constant SETTLED_SIG = keccak256("Settled(uint256)");
 
     function setUp() public virtual {
-        bls = _deployPassingBls();
+        registry = _deployPassingRegistry();
     }
 
     function _newVault() internal returns (GuardedVaultExposed) {
-        return new GuardedVaultExposed(avs, address(bls), MAX_BPS);
+        return new GuardedVaultExposed(avs, address(registry), MAX_BPS);
     }
 
     function _depositor(uint256 i) internal pure returns (address) {
@@ -65,7 +65,7 @@ abstract contract VaultTestKit is BenchmarkBase {
 
     /// @dev Mimics an honest operator's pre-sign gate: simulate landing `diff`, run the invariant on
     ///      the resulting post-state, then undo the simulation. Returns true iff the invariant holds —
-    ///      i.e. iff an honest operator would BLS-sign this diff. This is the example's whole point:
+    ///      i.e. iff an honest operator would sign this diff. This is the example's whole point:
     ///      the (expensive) invariant runs off-chain, during the transaction, before anything lands.
     function _operatorApproves(GuardedVaultExposed v, bytes memory diff) internal returns (bool ok) {
         uint256 snap = vm.snapshotState();
@@ -118,7 +118,7 @@ contract GuardedVaultTest is VaultTestKit {
         // Honest operator re-checks the diff against vault A's state before signing.
         assertTrue(_operatorApproves(A, diff), "operator should approve a conserving, in-cap settle");
 
-        // Land it via the full verifyAndUpdate path (mock BLS) and capture logs.
+        // Land it via the full verifyAndUpdate path (mock registry) and capture logs.
         uint256 countBefore = A.stateTransitionCount();
         vm.recordLogs();
         _verify(A, diff, GuardedVault.settle.selector);
@@ -226,8 +226,9 @@ contract GuardedVaultTest is VaultTestKit {
     /// @notice LIMITATION (honest): the invariant only enumerates `depositors[]`, so a diff that gives
     ///         shares to an address never registered as a depositor ESCAPES the conservation sum. An
     ///         honest operator never builds such a diff (settle only touches isDepositor users), so this
-    ///         is subsumed by the >=66%-malicious-quorum trust model — but it shows an invariant is only
-    ///         as complete as the state it covers. See the COMPLETENESS CAVEAT in GuardedVault.sol.
+    ///         is subsumed by the malicious-quorum trust model (a quorum holding the registry's stake
+    ///         threshold can sign anything) — but it shows an invariant is only as complete as the state
+    ///         it covers. See the COMPLETENESS CAVEAT in GuardedVault.sol.
     function test_guard_limitation_phantomOnNonDepositorEscapes() public {
         GuardedVaultExposed v = _newVault();
         _seedEqual(v, 5, 1000); // total 5000; depositors = d0..d4
@@ -275,14 +276,13 @@ contract GuardedVaultTest is VaultTestKit {
         B.settle(users, deltas);
         bytes memory diff = _buildSettleDiff(B, users);
 
-        bls.setSignedBps(6599);
+        registry.setSignedWeight(registry.thresholdWeight() - 1);
         if (block.number == 0) vm.roll(1);
         uint256 ti = A.stateTransitionCount();
         bytes32 h = A.getMessageHash(ti, GuardedVault.settle.selector, diff);
-        vm.expectRevert(IGasKillerSDK.InsufficientQuorumThreshold.selector);
-        A.verifyAndUpdate(
-            h, _quorumNumbers(), uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, _emptySignature()
-        );
+        (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate(h, uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
     }
 
     function _findSettledLog(Vm.Log[] memory logs) internal pure returns (Vm.Log memory) {

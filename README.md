@@ -1,10 +1,11 @@
 # Gas Killer — Example Contracts
 
 Example [Foundry](https://book.getfoundry.sh) contracts that show off the **Gas Killer SDK** — an
-EigenLayer AVS where operators run an expensive *state-changing* computation **off-chain**, BLS-sign
-the resulting storage diff, and submit it through `verifyAndUpdate`, which verifies a 66 % operator
-quorum and then applies the diff with raw `sstore` / `call` / `log`. The on-chain cost is signature
-verification + applying the diff — **not** the computation.
+EigenLayer AVS where operators run an expensive *state-changing* computation **off-chain**, sign the
+resulting storage diff with one aggregate Schnorr signature, and submit it through `verifyAndUpdate`,
+which checks that signature against a `SchnorrStakeRegistry` (the signers must hold the registry's
+stake threshold, e.g. 2/3 of registered weight) and then applies the diff with raw `sstore` / `call` /
+`log`. The on-chain cost is signature verification + applying the diff — **not** the computation.
 
 The pitch: **write the dumb, brute-force, gas-explosive contract you'd never normally ship**, and let
 operators do the heavy lifting off-chain.
@@ -26,15 +27,15 @@ operators do the heavy lifting off-chain.
    ┌───────────────────────────┐      ┌────────────────────────────────────┐
    │ every caller runs the      │      │ operator runs the expensive fn      │
    │ expensive fn on-chain      │      │ OFF-CHAIN, gets the storage diff     │
-   │  → O(N) gas, blows past a  │      │  → BLS-signs it (66% quorum)         │
+   │  → O(N) gas, blows past a  │      │  → quorum signs it (Schnorr agg.)    │
    │    30M block at modest N   │      │  → verifyAndUpdate applies the diff  │
-   └───────────────────────────┘      │    (sstore/log) for ~225k + the diff │
+   └───────────────────────────┘      │    (sstore/log): fixed verify + diff │
                                        └────────────────────────────────────┘
 ```
 
 A consumer contract:
 
-1. inherits `GasKillerSDK` and wires the AVS + BLS checker in its constructor;
+1. inherits `GasKillerSDK` and wires the AVS + Schnorr stake registry in its constructor;
 2. marks the expensive state-changing function with the `trackState` modifier (the function body is the
    *spec*; in production operators reproduce its result off-chain);
 3. operators submit the resulting `(StateUpdateType[], bytes[])` diff through `verifyAndUpdate`.
@@ -54,8 +55,13 @@ small storage diff.** Cost scales with compute; settlement scales with bytes cha
 
 Settlement cost is anchored in a **real Sepolia transaction**: our GuardedVault settled for **300,944 gas**
 ([`0x865bf3ab…`](https://eth-sepolia.blockscout.com/tx/0x865bf3ab1d23566bce98261c1096822fb9a7ff8a52fbd07da9b5e804ec17fb7c)),
-of which **224,827 is BLS signature verification** — measured by tracing it, not estimated. That cost is
+of which **224,827 is signature verification** — measured by tracing it, not estimated. That cost is
 fixed regardless of how much compute the operators did. See [`SECURITY.md`](./SECURITY.md).
+
+> That transaction settled under the earlier **BLS** SDK. The pinned SDK verifies one aggregate Schnorr
+> signature instead, which the SDK measures at ~17k gas cold at full participation, so the settlement
+> figures below are conservative upper bounds for the current SDK. The naive and apply-diff figures are
+> unaffected. See [`docs/GAS-REPORT.md`](./docs/GAS-REPORT.md#methodology--caveats).
 
 **OnchainLife — the apply cost does not move as compute explodes:**
 
@@ -119,17 +125,17 @@ therefore illustrates the *pattern* rather than proving this invariant needs it.
 ## Quickstart
 
 ```bash
-# clone with submodules (the SDK pulls in the EigenLayer middleware tree)
+# clone with submodules (the SDK pulls in OpenZeppelin and forge-std)
 git clone --recurse-submodules <this repo>
 # or, after a plain clone:
 git submodule update --init --recursive
 
-forge build          # compiles against the real GasKillerSDK + EigenLayer middleware (solc 0.8.27)
+forge build          # compiles against the real GasKillerSDK (solc 0.8.27)
 forge test           # unit, equivalence, verifyAndUpdate, canonical-encoding, benchmarks
 forge test --match-path 'test/examples/*.bench.t.sol' -vv   # see the gas numbers
 ```
 
-Deploy a demo locally (auto-deploys a mock BLS checker if `SIG_CHECKER_ADDRESS` is unset):
+Deploy a demo locally (auto-deploys a mock Schnorr stake registry if `SCHNORR_STAKE_REGISTRY_ADDRESS` is unset):
 
 ```bash
 anvil &
@@ -143,9 +149,9 @@ forge script script/DeployOnchainLife.s.sol --rpc-url http://localhost:8545 --br
 contract MyExample is GasKillerSDK {
     uint256 public result;                 // slot 0 (GasKillerSDK uses ERC-7201 namespaces)
 
-    constructor(address avs, address bls) {
+    constructor(address avs, address schnorrStakeRegistry) {
         _setAvsAddress(avs);
-        _setBlsSignatureChecker(bls);
+        _setSchnorrRegistry(schnorrStakeRegistry);
     }
 
     function expensiveThing(/* ... */) external trackState {  // the naive spec
@@ -162,7 +168,7 @@ bytes memory diff = OffchainPayloadBuilder.store(
     OffchainPayloadBuilder.simpleSlot(0),   // slot of `result`
     bytes32(computedResult)
 );
-// → verifyAndUpdate(msgHash, quorumNumbers, refBlock, diff, transitionIndex, selector, signature)
+// → verifyAndUpdate(msgHash, refBlock, diff, transitionIndex, selector, s, Raddr, nonSigners)
 ```
 
 Every test proves **equivalence**: running the naive function and applying the operator's diff produce
@@ -186,12 +192,12 @@ A real Gas Killer AVS stack is deployed on **Sepolia (chain 11155111)**.
 
 **The addresses live in [Configuration](https://gaskiller.xyz/docs/solidity/configuration).** They
 belong to a particular AVS deployment rather than to this repo, and a target wired to a superseded
-`BLSSignatureChecker` produces payloads that cannot settle — so they are maintained in one place, with a
+`SchnorrStakeRegistry` produces payloads that cannot settle — so they are maintained in one place, with a
 `cast call` recipe there for checking a value is still current. Export them before running anything below:
 
 ```bash
-export AVS_ADDRESS=...          # from the docs
-export SIG_CHECKER_ADDRESS=...  # from the docs
+export AVS_ADDRESS=...                     # from the docs
+export SCHNORR_STAKE_REGISTRY_ADDRESS=...  # from the docs
 ```
 
 These examples are exercised against a real AVS from the service repo, not from here. Its
@@ -204,12 +210,12 @@ Which examples that covers is set by the harness manifest — see
 
 [harness]: https://github.com/gas-killer/service/tree/main/scripts/examples
 
-Of the values a `verifyAndUpdate` call carries, only the aggregate signature `(sigma, apkG2)` needs
-operator keys. Everything else anyone can produce: the storage diff from an off-chain trace of the
+Of the values a `verifyAndUpdate` call carries, only the aggregate Schnorr signature `(s, Raddr)` needs
+operator keys (the `nonSigners` list is public: it names registered operators that did not sign). Everything else anyone can produce: the storage diff from an off-chain trace of the
 tracked function, the remainder from public on-chain reads. [Where each argument comes
 from](https://gaskiller.xyz/docs/solidity/reference#where-each-argument-comes-from) has the breakdown.
 
-To deploy an example wired to the real checker:
+To deploy an example wired to the real registry:
 
 ```bash
 forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --private-key $PK --broadcast
@@ -218,7 +224,7 @@ forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --privat
 ### Driving it via the hosted aggregator
 
 A hosted operator service at `https://testnet.gaskiller.xyz` runs the whole pipeline for a deployed
-consumer: simulate the call, compute the diff, and have the operator quorum BLS-sign it. It returns a
+consumer: simulate the call, compute the diff, and have the operator quorum sign it. It returns a
 ready-to-sign `verifyAndUpdate` transaction, which **you** submit.
 
 **The API contract is in the docs** — [Quickstart](https://gaskiller.xyz/docs/quickstart) for the
@@ -233,7 +239,7 @@ operators.
   offline, with a hand-built diff and a mocked quorum).
 - ✅ **On-chain wiring and settlement** are verified from the service repo: its `scripts/examples`
   harness deploys the examples its manifest names — `OnchainLife` and `GuardedVault` — against a
-  running AVS and asserts `stateTransitionCount` advances, which is a real `BLSSignatureChecker`
+  running AVS and asserts `stateTransitionCount` advances, which is a real signature verifier
   accepting a real aggregated signature. `SortedOracle` is not in that manifest yet.
 - ⚠️ **No end-to-end run through the hosted service is currently reproducible**, because the
   credential documented previously is retired and we hold no replacement API key. Earlier rounds
@@ -261,8 +267,8 @@ Solidity layout with `vm.store` / `vm.load`. In your own tests, verify a compute
 src/examples/<name>/         the example contracts
 src/examples/algo/<kind>/    reusable algorithm primitives (pure, no storage, no SDK)
 test/helpers/                OffchainPayloadBuilder (slot math + payload), BenchmarkBase
-test/mocks/                  MockBLSSignatureChecker (passes/fails the 66% quorum; no crypto)
+test/mocks/                  MockSchnorrStakeRegistry (passes/fails the 2/3 stake threshold; no crypto)
 test/exposed/                per-example subclasses exposing the diff applier for gas isolation
 test/examples/               *.t.sol (unit + equivalence + verifyAndUpdate) and *.bench.t.sol
-script/                      Deploy<Example>.s.sol + DeployMockBLS.s.sol
+script/                      Deploy<Example>.s.sol + DeployMockRegistry.s.sol
 ```

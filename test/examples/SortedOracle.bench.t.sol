@@ -23,7 +23,7 @@ import {SortedOracleExposed} from "../exposed/SortedOracleExposed.sol";
 ///            target here is committed in a prior transaction and then used exactly once.
 ///
 ///         Gas is measured with `gasleft()` deltas around the external call. Apply-diff numbers
-///         EXCLUDE the fixed BLS_VERIFY_FIXED_GAS (~250k) a production submission adds; that overhead
+///         EXCLUDE the fixed QUORUM_VERIFY_FIXED_GAS (~250k) a production submission adds; that overhead
 ///         is constant in N, so the shape is unchanged.
 contract SortedOracleBench is SortedOracleTestKit {
     /// @notice Oracles seeded in `setUp` so their observations are cold when a commit reads them.
@@ -60,7 +60,7 @@ contract SortedOracleBench is SortedOracleTestKit {
 
         uint256[] memory warmup = _randomObservations(999, 8);
         for (uint256 i = 0; i < targets.length; i++) {
-            targets[i] = new SortedOracleExposed(avs, address(bls));
+            targets[i] = new SortedOracleExposed(avs, address(registry));
             targets[i].reportBatch(warmup);
             targets[i].commit();
         }
@@ -95,12 +95,12 @@ contract SortedOracleBench is SortedOracleTestKit {
         for (uint256 i = 0; i < ns.length; i++) {
             uint256 naive = _gasOfCommit(sweepOracles[i]);
             uint256 applied = _gasOfApply(_buildOracleDiff(sweepOracles[i]));
-            uint256 production = applied + BLS_VERIFY_FIXED_GAS;
+            uint256 production = applied + QUORUM_VERIFY_FIXED_GAS;
 
             emit log_named_uint("observations             ", ns[i]);
             emit log_named_uint("  naive commit gas       ", naive);
             emit log_named_uint("  apply-diff gas         ", applied);
-            emit log_named_uint("  apply + BLS (prod est) ", production);
+            emit log_named_uint("  apply + verify (prod est) ", production);
             emit log_named_uint("  savings factor         ", naive / production);
 
             if (i == 0) firstApply = applied;
@@ -149,11 +149,11 @@ contract SortedOracleBench is SortedOracleTestKit {
 
         emit log_named_uint("naive commit, N=5000", naive);
         emit log_named_uint("apply-diff          ", applied);
-        emit log_named_uint("apply + BLS (prod)  ", applied + BLS_VERIFY_FIXED_GAS);
+        emit log_named_uint("apply + verify (prod)  ", applied + QUORUM_VERIFY_FIXED_GAS);
         emit log_named_uint("mainnet block gas   ", MAINNET_BLOCK_GAS);
 
         assertGt(naive, MAINNET_BLOCK_GAS, "5,000 observations must exceed a 30M mainnet block");
-        assertLt(applied + BLS_VERIFY_FIXED_GAS, MAINNET_BLOCK_GAS, "settlement must fit comfortably in a block");
+        assertLt(applied + QUORUM_VERIFY_FIXED_GAS, MAINNET_BLOCK_GAS, "settlement must fit comfortably in a block");
     }
 
     /// @notice The apply cost measured against a target whose six words were already committed in a
@@ -166,7 +166,7 @@ contract SortedOracleBench is SortedOracleTestKit {
         source.commit();
         bytes memory diff = _buildOracleDiff(source);
 
-        SortedOracleExposed fresh = new SortedOracleExposed(avs, address(bls));
+        SortedOracleExposed fresh = new SortedOracleExposed(avs, address(registry));
         uint256 g0 = gasleft();
         fresh.applyDiff(diff);
         uint256 firstEver = g0 - gasleft();
@@ -175,7 +175,7 @@ contract SortedOracleBench is SortedOracleTestKit {
 
         emit log_named_uint("apply, first commit ever (zero slots)", firstEver);
         emit log_named_uint("apply, steady state (production)     ", steadyState);
-        emit log_named_uint("steady state + BLS_VERIFY (prod est) ", steadyState + BLS_VERIFY_FIXED_GAS);
+        emit log_named_uint("steady state + QUORUM_VERIFY (prod est) ", steadyState + QUORUM_VERIFY_FIXED_GAS);
 
         assertLt(steadyState, firstEver, "overwriting committed words must cost less than first-ever writes");
         assertEq(COMMIT_OPS, 7, "a commit is always six stores and one log");
