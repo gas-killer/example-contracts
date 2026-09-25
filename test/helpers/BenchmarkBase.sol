@@ -3,8 +3,7 @@ pragma solidity ^0.8.13;
 
 import {Test} from "forge-std/Test.sol";
 import {GasKillerSDK} from "gas-killer-sdk/GasKillerSDK.sol";
-import {IBLSSignatureCheckerTypes} from "@eigenlayer-middleware/interfaces/IBLSSignatureChecker.sol";
-import {MockBLSSignatureChecker} from "../mocks/MockBLSSignatureChecker.sol";
+import {MockSchnorrStakeRegistry} from "../mocks/MockSchnorrStakeRegistry.sol";
 
 /// @title BenchmarkBase
 /// @notice Shared base for the example tests/benchmarks. Centralizes the (fiddly) `verifyAndUpdate`
@@ -18,24 +17,17 @@ abstract contract BenchmarkBase is Test {
 
     /// @notice Documented, **N-independent** fixed overhead of a real Gas Killer submission.
     /// @dev Seeded from the analyzer's `TURETZKY_UPPER_GAS_LIMIT` (the ~250k floor for executing a
-    ///      Gas Killer tx, which includes BLS quorum verification). The MockBLSSignatureChecker used
-    ///      in these tests does NO crypto, so apply-diff gas measured here EXCLUDES this cost — add
-    ///      it back when quoting a production figure. It is constant in N, so it does not change the
-    ///      shape of the "flat apply-diff vs. super-linear naive" comparison.
-    uint256 internal constant BLS_VERIFY_FIXED_GAS = 250_000;
+    ///      Gas Killer tx, including quorum verification). The MockSchnorrStakeRegistry used in these
+    ///      tests does NO crypto, so apply-diff gas measured here EXCLUDES this cost — add it back when
+    ///      quoting a production figure. It is constant in N, so it does not change the shape of the
+    ///      "flat apply-diff vs. super-linear naive" comparison. It is a conservative ceiling: it was
+    ///      sized for BLS verification, and the SDK measures aggregate Schnorr verification at ~17k
+    ///      cold at full participation.
+    uint256 internal constant QUORUM_VERIFY_FIXED_GAS = 250_000;
 
-    /// @notice A single-quorum selector (quorum #0). Length drives the mock's stake-array sizing.
-    function _quorumNumbers() internal pure returns (bytes memory) {
-        return hex"00";
-    }
-
-    /// @notice An all-zero NonSignerStakesAndSignature — valid Solidity; the mock ignores it.
-    function _emptySignature()
-        internal
-        pure
-        returns (IBLSSignatureCheckerTypes.NonSignerStakesAndSignature memory nss)
-    {
-        return nss;
+    /// @notice A placeholder aggregate Schnorr signature with no non-signers; the mock ignores it.
+    function _placeholderSignature() internal pure returns (uint256 s, address rAddr, address[] memory nonSigners) {
+        return (1, address(0x5C), new address[](0));
     }
 
     /// @notice Compute the correct `verifyAndUpdate` arguments for applying `storageUpdates` to `c`.
@@ -49,43 +41,31 @@ abstract contract BenchmarkBase is Test {
     ///      `msgHash` is always derived via the SDK's own `getMessageHash` so the encoding can't drift.
     function _prepVerify(GasKillerSDK c, bytes memory storageUpdates, bytes4 targetFunction)
         internal
-        returns (
-            bytes32 msgHash,
-            bytes memory quorumNumbers,
-            uint32 referenceBlockNumber,
-            uint256 transitionIndex,
-            IBLSSignatureCheckerTypes.NonSignerStakesAndSignature memory nss
-        )
+        returns (bytes32 msgHash, uint32 referenceBlockNumber, uint256 transitionIndex)
     {
         if (block.number == 0) {
             vm.roll(1);
         }
         transitionIndex = c.stateTransitionCount();
         msgHash = c.getMessageHash(transitionIndex, targetFunction, storageUpdates);
-        quorumNumbers = _quorumNumbers();
         referenceBlockNumber = uint32(block.number - 1);
-        nss = _emptySignature();
     }
 
-    /// @notice Apply `storageUpdates` to `c` through the full `verifyAndUpdate` path (mock BLS).
+    /// @notice Apply `storageUpdates` to `c` through the full `verifyAndUpdate` path (mock registry).
     /// @dev Use this when you just want the diff applied; wrap the inner call yourself with
     ///      `vm.startSnapshotGas`/`vm.stopSnapshotGas` when you specifically want to meter it.
     function _verify(GasKillerSDK c, bytes memory storageUpdates, bytes4 targetFunction) internal {
-        (
-            bytes32 msgHash,
-            bytes memory quorumNumbers,
-            uint32 referenceBlockNumber,
-            uint256 transitionIndex,
-            IBLSSignatureCheckerTypes.NonSignerStakesAndSignature memory nss
-        ) = _prepVerify(c, storageUpdates, targetFunction);
+        (bytes32 msgHash, uint32 referenceBlockNumber, uint256 transitionIndex) =
+            _prepVerify(c, storageUpdates, targetFunction);
+        (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
         c.verifyAndUpdate(
-            msgHash, quorumNumbers, referenceBlockNumber, storageUpdates, transitionIndex, targetFunction, nss
+            msgHash, referenceBlockNumber, storageUpdates, transitionIndex, targetFunction, s, rAddr, nonSigners
         );
     }
 
-    /// @notice Deploy a fresh mock BLS checker configured to pass the 66% quorum check.
-    function _deployPassingBls() internal returns (MockBLSSignatureChecker) {
-        return new MockBLSSignatureChecker();
+    /// @notice Deploy a fresh mock registry reporting full participation, so every quorum passes.
+    function _deployPassingRegistry() internal returns (MockSchnorrStakeRegistry) {
+        return new MockSchnorrStakeRegistry();
     }
 
     /// @notice Human-readable label for a sweep size, e.g. "N=5000".

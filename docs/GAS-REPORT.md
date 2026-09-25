@@ -17,6 +17,14 @@ actually settled on Sepolia through the live operator quorum:
 That **224,827** is the number that used to be a 250,000-gas guess. It is fixed — it does not care how
 much computation the operators did off-chain — which is the whole reason the economics work.
 
+> **These settlement figures were measured under the BLS SDK.** The SDK these examples now pin
+> (`solidity-sdk@8b57a74`) replaces BLS with a single aggregate Schnorr signature checked by a
+> `SchnorrStakeRegistry`, which the SDK measures at ~17k gas cold at full participation. The verification
+> term below is therefore an over-estimate for the current SDK, and every "Gas Killer settlement" figure
+> and factor built on it is a conservative bound. The naive and apply-diff columns do not depend on the
+> signature scheme and are unchanged. No Schnorr settlement of these contracts has been traced yet, so the
+> BLS measurement stays the anchor until one is.
+
 Naive figures come from `forge test --match-path 'test/**/*.bench.t.sol' -vv` (the `algo/` suites sit in a
 nested directory, so a single-level glob misses them); OnchainLife's diff-apply figure from
 `forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage), SDK `79d3716`.
@@ -217,7 +225,7 @@ between 4,000 and 8,000 — an order of magnitude larger N, from nothing but the
 naive column pays production-rate cold reads; the apply column is measured against a target that had
 already committed once, so its six words are overwrites rather than first-ever writes:
 
-| Observations | Naive commit | Apply diff | + BLS (est.) | Factor |
+| Observations | Naive commit | Apply diff | + 250k verify (est.) | Factor |
 |---:|---:|---:|---:|---:|
 | 250 | 1,504,581 | 41,288 | 291,288 | 5× |
 | 500 | 2,932,317 | 41,312 | 291,312 | 10× |
@@ -327,12 +335,13 @@ Stated plainly, because the headline numbers depend on them.
 1. **Signature-verification cost is now measured, not estimated.** Earlier drafts added a 250,000-gas
    guess. The figure used here, **224,827**, comes from tracing a real Sepolia `verifyAndUpdate`
    (`0x865bf3ab…fb7c`) and reading the gas of the `BLSSignatureChecker` sub-call — the bulk of which is
-   the BN254 pairing precompile (113,000). The repo's test constant `BLS_VERIFY_FIXED_GAS = 250,000`
-   remains a deliberately conservative over-estimate for assertions.
+   the BN254 pairing precompile (113,000). The repo's test constant `QUORUM_VERIFY_FIXED_GAS = 250,000`
+   remains a deliberately conservative over-estimate for assertions — more so now that the SDK verifies
+   an aggregate Schnorr signature instead (see the note at the top).
 2. **One contract's settlement is real; the other's is derived.** GuardedVault's 300,944 is an actual
    on-chain transaction. OnchainLife never settled on-chain (its 16.8M-gas simulation exceeded what the
    operator's tracer could handle at the time), so its ~400,000 is built from measured parts and is
-   labelled as such wherever it appears. The Solidity tests themselves use a mock signature checker.
+   labelled as such wherever it appears. The Solidity tests themselves use a mock stake registry.
 3. **Storage pricing — read this one carefully.** Under EIP-2200/2929 a slot whose value was zero at the
    *start of the transaction* is a "dirty" slot and costs 100 gas to write, versus 5,000 for overwriting a
    committed non-zero word. The OnchainLife and GuardedVault `.bench.t.sol` suites deploy the apply target

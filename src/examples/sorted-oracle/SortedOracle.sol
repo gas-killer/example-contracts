@@ -62,11 +62,12 @@ contract SortedOracle is GasKillerSDK {
 
     error EmptyObservationSet();
 
-    /// @param _avsAddress AVS service-manager address (scopes the Gas Killer namespace).
-    /// @param _blsSigChecker BLS signature checker used by `verifyAndUpdate`.
-    constructor(address _avsAddress, address _blsSigChecker) {
+    /// @param _avsAddress AVS service-manager address this contract is scoped to.
+    /// @param _schnorrStakeRegistry Schnorr stake registry that verifies the aggregate quorum
+    ///        signature in `verifyAndUpdate`.
+    constructor(address _avsAddress, address _schnorrStakeRegistry) {
         _setAvsAddress(_avsAddress);
-        _setBlsSignatureChecker(_blsSigChecker);
+        _setSchnorrRegistry(_schnorrStakeRegistry);
     }
 
     /// @notice Record one observation. O(1); not the focus of the example.

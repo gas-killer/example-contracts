@@ -17,11 +17,16 @@ jobs:
       - name: Checkout (with submodules)
         uses: actions/checkout@v4
         with:
-          # MANDATORY: the SDK submodule pulls in eigenlayer-middleware -> eigenlayer-contracts -> OZ.
+          # MANDATORY: the SDK submodule pulls in OpenZeppelin and forge-std.
           submodules: recursive
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # The gas benchmarks measure with gasleft() around a call, and later releases account
+          # for that call differently (~28k higher, one read cold instead of warm), breaking their
+          # bounds. Pinned until the benchmarks budget per accounting mode.
+          version: v1.5.1
 
       - name: Show forge version
         run: forge --version

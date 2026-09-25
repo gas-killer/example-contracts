@@ -6,19 +6,19 @@ import {console} from "forge-std/Script.sol";
 import {OnchainLife} from "../src/examples/onchain-life/OnchainLife.sol";
 
 /// @notice Deploy OnchainLife seeded with a glider near the top-left corner.
-/// @dev Env: AVS_ADDRESS (optional, demo default), SIG_CHECKER_ADDRESS (optional; mock if unset).
+/// @dev Env: AVS_ADDRESS (optional, demo default), SCHNORR_STAKE_REGISTRY_ADDRESS (optional; mock if unset).
 contract DeployOnchainLife is DeployBase {
     function run() external returns (address life) {
         uint256[16] memory seed = _gliderSeed();
 
         vm.startBroadcast();
-        address checker = _resolveChecker();
-        life = address(new OnchainLife(_avs(), checker, seed));
+        address registry = _resolveRegistry();
+        life = address(new OnchainLife(_avs(), registry, seed));
         vm.stopBroadcast();
 
         console.log("OnchainLife:", life);
         console.log("AVS:", _avs());
-        console.log("BLS checker:", checker);
+        console.log("Schnorr stake registry:", registry);
     }
 
     /// @dev A standard glider at the top-left: cells (1,0),(2,1),(0,2),(1,2),(2,2). All in word 0.

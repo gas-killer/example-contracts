@@ -11,7 +11,7 @@ import {OnchainLifeExposed} from "../exposed/OnchainLifeExposed.sol";
 ///         generation word + one LOG2) regardless of how many generations were computed off-chain.
 ///
 ///         Gas is measured with `gasleft()` deltas around the external call — deterministic and easy
-///         to reason about. Apply-diff numbers EXCLUDE the fixed BLS_VERIFY_FIXED_GAS (~250k) a
+///         to reason about. Apply-diff numbers EXCLUDE the fixed QUORUM_VERIFY_FIXED_GAS (~250k) a
 ///         production submission adds; that overhead is constant in N, so the shape is unchanged.
 contract OnchainLifeBench is LifeTestKit {
     uint256 internal constant APPLY_DIFF_CEILING = 600_000; // generous bound on 16 STOREs + gen + log
@@ -32,17 +32,17 @@ contract OnchainLifeBench is LifeTestKit {
     function test_costCollapse_applyDiffBoundedVsNaiveGrowing() public {
         uint256[16] memory seed = _randomSeed(42);
 
-        OnchainLife a1 = new OnchainLife(avs, address(bls), seed);
+        OnchainLife a1 = new OnchainLife(avs, address(registry), seed);
         uint256 naive1 = _gasOfStep(a1, 1);
 
-        OnchainLife a8 = new OnchainLife(avs, address(bls), seed);
+        OnchainLife a8 = new OnchainLife(avs, address(registry), seed);
         uint256 naive8 = _gasOfStep(a8, 8);
 
         bytes memory diff1 = _buildLifeDiff(a1);
         bytes memory diff8 = _buildLifeDiff(a8);
 
-        OnchainLifeExposed e1 = new OnchainLifeExposed(avs, address(bls), seed);
-        OnchainLifeExposed e8 = new OnchainLifeExposed(avs, address(bls), seed);
+        OnchainLifeExposed e1 = new OnchainLifeExposed(avs, address(registry), seed);
+        OnchainLifeExposed e8 = new OnchainLifeExposed(avs, address(registry), seed);
         uint256 apply1 = _gasOfApply(e1, diff1);
         uint256 apply8 = _gasOfApply(e8, diff8);
 
@@ -50,7 +50,7 @@ contract OnchainLifeBench is LifeTestKit {
         emit log_named_uint("naive step(8) gas         ", naive8);
         emit log_named_uint("apply diff(1 gen) gas     ", apply1);
         emit log_named_uint("apply diff(8 gens) gas    ", apply8);
-        emit log_named_uint("apply(8) + BLS_VERIFY (prod)", apply8 + BLS_VERIFY_FIXED_GAS);
+        emit log_named_uint("apply(8) + QUORUM_VERIFY (prod)", apply8 + QUORUM_VERIFY_FIXED_GAS);
 
         // Naive grows ~linearly with generations.
         assertGt(naive8, naive1 * 6, "naive cost should scale with generations");
@@ -73,17 +73,17 @@ contract OnchainLifeBench is LifeTestKit {
         uint256 firstApply;
 
         for (uint256 i = 0; i < gens.length; i++) {
-            OnchainLife a = new OnchainLife(avs, address(bls), seed);
+            OnchainLife a = new OnchainLife(avs, address(registry), seed);
             uint256 naive = _gasOfStep(a, gens[i]);
 
-            OnchainLifeExposed e = new OnchainLifeExposed(avs, address(bls), seed);
+            OnchainLifeExposed e = new OnchainLifeExposed(avs, address(registry), seed);
             uint256 applied = _gasOfApply(e, _buildLifeDiff(a));
-            uint256 prod = applied + BLS_VERIFY_FIXED_GAS;
+            uint256 prod = applied + QUORUM_VERIFY_FIXED_GAS;
 
             emit log_named_uint("generations              ", gens[i]);
             emit log_named_uint("  naive gas              ", naive);
             emit log_named_uint("  apply-diff gas         ", applied);
-            emit log_named_uint("  apply + BLS (prod est) ", prod);
+            emit log_named_uint("  apply + verify (prod est) ", prod);
             emit log_named_uint("  savings factor (naive/prod)", naive / prod);
 
             if (i == 0) firstApply = applied;
@@ -97,7 +97,7 @@ contract OnchainLifeBench is LifeTestKit {
     ///         is unshippable as written, yet trivial to drive via Gas Killer.
     function test_naive_exceedsMainnetBlockGas() public {
         uint256[16] memory seed = _randomSeed(42);
-        OnchainLife a = new OnchainLife(avs, address(bls), seed);
+        OnchainLife a = new OnchainLife(avs, address(registry), seed);
         uint256 naive = _gasOfStep(a, 2);
         emit log_named_uint("naive step(2) gas", naive);
         emit log_named_uint("mainnet block gas", MAINNET_BLOCK_GAS);

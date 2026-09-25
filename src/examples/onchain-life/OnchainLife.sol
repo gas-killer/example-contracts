@@ -16,7 +16,7 @@ import {GasKillerSDK} from "gas-killer-sdk/GasKillerSDK.sol";
 ///         OnchainLife the clearest demonstration of Gas Killer's "heavy compute -> small flat diff"
 ///         sweet spot, and the natural place to show the "trust-only, unbounded" regime (see the
 ///         tests and SECURITY.md): nothing on-chain re-checks the board, so a far-future state rests
-///         entirely on the 66% operator quorum being honest.
+///         entirely on the operator quorum (the Schnorr registry's stake threshold) being honest.
 ///
 /// @dev Storage layout (verify with `forge inspect ... storage-layout`): `board` is declared first
 ///      so it occupies slots 0..15 (one `uint256` per 256-cell word); `generation` is slot 16.
@@ -46,12 +46,13 @@ contract OnchainLife is GasKillerSDK {
     ///      equivalent diff uses a LOG2 op: data = abi.encode(boardHash), topics = [sig, generation].
     event GenerationStepped(uint256 indexed generation, bytes32 boardHash);
 
-    /// @param _avsAddress AVS service-manager address (scopes the Gas Killer namespace).
-    /// @param _blsSigChecker BLS signature checker used by `verifyAndUpdate`.
+    /// @param _avsAddress AVS service-manager address this contract is scoped to.
+    /// @param _schnorrStakeRegistry Schnorr stake registry that verifies the aggregate quorum
+    ///        signature in `verifyAndUpdate`.
     /// @param _seed Initial packed board (16 words). Cell (x,y) = bit `y*64+x`.
-    constructor(address _avsAddress, address _blsSigChecker, uint256[16] memory _seed) {
+    constructor(address _avsAddress, address _schnorrStakeRegistry, uint256[16] memory _seed) {
         _setAvsAddress(_avsAddress);
-        _setBlsSignatureChecker(_blsSigChecker);
+        _setSchnorrRegistry(_schnorrStakeRegistry);
         for (uint256 i = 0; i < WORDS; i++) {
             board[i] = _seed[i];
         }

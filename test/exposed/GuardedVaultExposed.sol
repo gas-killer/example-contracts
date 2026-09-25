@@ -7,7 +7,7 @@ import {GuardedVault} from "../../src/examples/guarded-vault/GuardedVault.sol";
 ///         gas and, crucially, to let the "operator" apply a candidate diff to a sandbox and run the
 ///         invariant on the resulting post-state before deciding whether to sign.
 contract GuardedVaultExposed is GuardedVault {
-    constructor(address avs, address bls, uint256 maxBps) GuardedVault(avs, bls, maxBps) {}
+    constructor(address avs, address registry, uint256 maxBps) GuardedVault(avs, registry, maxBps) {}
 
     function applyDiff(bytes calldata storageUpdates) external {
         _stateChangeHandler(storageUpdates);

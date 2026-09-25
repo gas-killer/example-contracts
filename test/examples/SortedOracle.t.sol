@@ -4,13 +4,13 @@ pragma solidity ^0.8.13;
 import {BenchmarkBase} from "../helpers/BenchmarkBase.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {SortedOracle} from "../../src/examples/sorted-oracle/SortedOracle.sol";
-import {MockBLSSignatureChecker} from "../mocks/MockBLSSignatureChecker.sol";
+import {MockSchnorrStakeRegistry} from "../mocks/MockSchnorrStakeRegistry.sol";
 import {OffchainPayloadBuilder} from "../helpers/OffchainPayloadBuilder.sol";
 import {StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 
 /// @notice Shared fixtures + diff-building helpers for the SortedOracle unit tests and benchmarks.
 abstract contract SortedOracleTestKit is BenchmarkBase {
-    MockBLSSignatureChecker internal bls;
+    MockSchnorrStakeRegistry internal registry;
     address internal avs = makeAddr("avs");
 
     // Slot constants (verified against `forge inspect`): observations @ 0, then the six words a
@@ -31,7 +31,7 @@ abstract contract SortedOracleTestKit is BenchmarkBase {
     uint256 internal constant COMMIT_OPS = 7;
 
     function setUp() public virtual {
-        bls = _deployPassingBls();
+        registry = _deployPassingRegistry();
     }
 
     /// @dev Build the storage diff an operator would submit after `o` committed: the six order-
@@ -66,7 +66,7 @@ abstract contract SortedOracleTestKit is BenchmarkBase {
     }
 
     function _deployOracle() internal returns (SortedOracle) {
-        return new SortedOracle(avs, address(bls));
+        return new SortedOracle(avs, address(registry));
     }
 
     /// @dev Pseudorandom observations — the average case for the sort behind a commit.
@@ -213,7 +213,7 @@ contract SortedOracleTest is SortedOracleTestKit {
 
     /// @notice The heart of the demo: run the naive `commit` on instance A, have the "operator" build
     ///         the resulting storage diff, apply it to an identically-seeded instance B through the
-    ///         *full* `verifyAndUpdate` path (mock BLS), and assert A and B end up byte-identical —
+    ///         *full* `verifyAndUpdate` path (mock registry), and assert A and B end up byte-identical —
     ///         every written slot (via raw `vm.load`) and the emitted log.
     function test_equivalence_naiveVsDiff() public {
         uint256[] memory values = _randomObservations(42, 200);

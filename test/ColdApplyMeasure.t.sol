@@ -22,7 +22,7 @@ contract ColdApplyMeasureTest is LifeTestKit {
 
     function setUpCold(uint32 gens) internal returns (bytes memory diff) {
         uint256[16] memory seed = _randomSeed(42);
-        computed = new OnchainLife(avs, address(bls), seed);
+        computed = new OnchainLife(avs, address(registry), seed);
         computed.step(gens);
         diff = _buildLifeDiff(computed);
     }
@@ -31,7 +31,7 @@ contract ColdApplyMeasureTest is LifeTestKit {
     ///      `setUp` is exactly that, so anything created here has committed, non-zero storage.
     function _coldTarget() internal returns (OnchainLifeExposed t) {
         uint256[16] memory seed = _randomSeed(42);
-        t = new OnchainLifeExposed(avs, address(bls), seed);
+        t = new OnchainLifeExposed(avs, address(registry), seed);
     }
 
     /// @notice Same diff, applied to an in-transaction target vs a prior-transaction target.
@@ -52,7 +52,7 @@ contract ColdApplyMeasureTest is LifeTestKit {
 
         emit log_named_uint("apply, target deployed in-tx (bench figure)", warmish);
         emit log_named_uint("apply, target deployed in a prior tx (production)", cold);
-        emit log_named_uint("production + BLS_VERIFY estimate", cold + BLS_VERIFY_FIXED_GAS);
+        emit log_named_uint("production + QUORUM_VERIFY estimate", cold + QUORUM_VERIFY_FIXED_GAS);
         emit log_named_uint("understatement factor x100", (cold * 100) / warmish);
 
         assertGt(cold, warmish, "a production-shaped apply must cost MORE than the in-tx measurement");
@@ -63,6 +63,6 @@ contract ColdApplyMeasureTest is LifeTestKit {
     function setUp() public override {
         super.setUp();
         uint256[16] memory seed = _randomSeed(42);
-        target = new OnchainLifeExposed(avs, address(bls), seed);
+        target = new OnchainLifeExposed(avs, address(registry), seed);
     }
 }
