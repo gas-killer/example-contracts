@@ -134,7 +134,7 @@ These examples deliberately cover both:
 ## Marketing vs. code
 
 Gas Killer's landing page advertises "objective on-chain slashing" and "infinite computation? no
-problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@8b57a74`), the code backs
+problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@42fde57`), the code backs
 **neither**: there is no on-chain slashing or fraud proof, and the default simulation profile
 (`GK_SIM_PROFILE=chain`) stays within a block's gas. A `1 << 40`-gas profile exists but is opt-in, still
 bounded by what a *payload* can carry, and explicitly not production-ready — see the profile note above.
