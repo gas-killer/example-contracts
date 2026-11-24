@@ -279,10 +279,9 @@ contract GuardedVaultTest is VaultTestKit {
         registry.setSignedWeight(registry.thresholdWeight() - 1);
         if (block.number == 0) vm.roll(1);
         uint256 ti = A.stateTransitionCount();
-        bytes32 h = A.getMessageHash(ti, GuardedVault.settle.selector, diff);
         (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
         vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
-        A.verifyAndUpdate(h, uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+        A.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
     }
 
     function _findSettledLog(Vm.Log[] memory logs) internal pure returns (Vm.Log memory) {

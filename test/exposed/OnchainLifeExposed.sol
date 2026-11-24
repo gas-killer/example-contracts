@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
+import {StateChangeHandlerLib, StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 import {OnchainLife} from "../../src/examples/onchain-life/OnchainLife.sol";
 
 /// @notice Test-only subclass exposing the internal diff applier so benchmarks can measure the
@@ -9,7 +10,12 @@ import {OnchainLife} from "../../src/examples/onchain-life/OnchainLife.sol";
 contract OnchainLifeExposed is OnchainLife {
     constructor(address avs, address registry, uint256[16] memory seed) OnchainLife(avs, registry, seed) {}
 
+    /// @dev Runs the diff as settlement does, under this contract's protected ranges and call
+    ///      policy, without the quorum check. The SDK's own handler is private.
     function applyDiff(bytes calldata storageUpdates) external {
-        _stateChangeHandler(storageUpdates);
+        (StateUpdateType[] memory types, bytes[] memory args) = abi.decode(storageUpdates, (StateUpdateType[], bytes[]));
+        _beforeProgram();
+        StateChangeHandlerLib._runStateUpdatesPrevalidated(types, args, _settlementRanges(), _callPolicy());
+        _afterProgram();
     }
 }

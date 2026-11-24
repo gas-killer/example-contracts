@@ -168,7 +168,7 @@ bytes memory diff = OffchainPayloadBuilder.store(
     OffchainPayloadBuilder.simpleSlot(0),   // slot of `result`
     bytes32(computedResult)
 );
-// → verifyAndUpdate(msgHash, refBlock, diff, transitionIndex, selector, s, Raddr, nonSigners)
+// → verifyAndUpdate(refBlock, diff, transitionIndex, selector, s, Raddr, nonSigners)
 ```
 
 Every test proves **equivalence**: running the naive function and applying the operator's diff produce

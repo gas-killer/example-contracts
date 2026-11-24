@@ -154,10 +154,10 @@ contract OnchainLifeTest is LifeTestKit {
 
         registry.setSignedWeight(registry.thresholdWeight() - 1); // one unit short of 2/3
         // Build the same plumbing _verify uses, then expect the revert on the call itself.
-        (bytes32 msgHash, uint32 refBlock, uint256 transitionIndex) = _prepVerify(b, diff, OnchainLife.step.selector);
+        (uint32 refBlock, uint256 transitionIndex) = _prepVerify(b);
         (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
         vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
-        b.verifyAndUpdate(msgHash, refBlock, diff, transitionIndex, OnchainLife.step.selector, s, rAddr, nonSigners);
+        b.verifyAndUpdate(refBlock, diff, transitionIndex, OnchainLife.step.selector, s, rAddr, nonSigners);
     }
 
     /// @notice The exact threshold boundary must PASS: the registry check is `signed*den >= total*num`,

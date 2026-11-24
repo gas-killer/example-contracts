@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
+import {StateChangeHandlerLib, StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 import {SortedOracle} from "../../src/examples/sorted-oracle/SortedOracle.sol";
 
 /// @notice Test-only subclass exposing the internal diff applier so benchmarks can measure the pure
@@ -9,7 +10,12 @@ import {SortedOracle} from "../../src/examples/sorted-oracle/SortedOracle.sol";
 contract SortedOracleExposed is SortedOracle {
     constructor(address avs, address registry) SortedOracle(avs, registry) {}
 
+    /// @dev Runs the diff as settlement does, under this contract's protected ranges and call
+    ///      policy, without the quorum check. The SDK's own handler is private.
     function applyDiff(bytes calldata storageUpdates) external {
-        _stateChangeHandler(storageUpdates);
+        (StateUpdateType[] memory types, bytes[] memory args) = abi.decode(storageUpdates, (StateUpdateType[], bytes[]));
+        _beforeProgram();
+        StateChangeHandlerLib._runStateUpdatesPrevalidated(types, args, _settlementRanges(), _callPolicy());
+        _afterProgram();
     }
 }

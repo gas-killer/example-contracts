@@ -38,16 +38,12 @@ abstract contract BenchmarkBase is Test {
     ///       - block staleness: `referenceBlockNumber` must be `< block.number` and within
     ///         `blockStaleMeasure` (300) blocks. `block.number - 1` always satisfies both for
     ///         `block.number >= 1`.
-    ///      `msgHash` is always derived via the SDK's own `getMessageHash` so the encoding can't drift.
-    function _prepVerify(GasKillerSDK c, bytes memory storageUpdates, bytes4 targetFunction)
-        internal
-        returns (bytes32 msgHash, uint32 referenceBlockNumber, uint256 transitionIndex)
-    {
+    ///      There's no digest to pass: `verifyAndUpdate` rebuilds it from these arguments.
+    function _prepVerify(GasKillerSDK c) internal returns (uint32 referenceBlockNumber, uint256 transitionIndex) {
         if (block.number == 0) {
             vm.roll(1);
         }
         transitionIndex = c.stateTransitionCount();
-        msgHash = c.getMessageHash(transitionIndex, targetFunction, storageUpdates);
         referenceBlockNumber = uint32(block.number - 1);
     }
 
@@ -55,12 +51,9 @@ abstract contract BenchmarkBase is Test {
     /// @dev Use this when you just want the diff applied; wrap the inner call yourself with
     ///      `vm.startSnapshotGas`/`vm.stopSnapshotGas` when you specifically want to meter it.
     function _verify(GasKillerSDK c, bytes memory storageUpdates, bytes4 targetFunction) internal {
-        (bytes32 msgHash, uint32 referenceBlockNumber, uint256 transitionIndex) =
-            _prepVerify(c, storageUpdates, targetFunction);
+        (uint32 referenceBlockNumber, uint256 transitionIndex) = _prepVerify(c);
         (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
-        c.verifyAndUpdate(
-            msgHash, referenceBlockNumber, storageUpdates, transitionIndex, targetFunction, s, rAddr, nonSigners
-        );
+        c.verifyAndUpdate(referenceBlockNumber, storageUpdates, transitionIndex, targetFunction, s, rAddr, nonSigners);
     }
 
     /// @notice Deploy a fresh mock registry reporting full participation, so every quorum passes.
