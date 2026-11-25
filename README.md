@@ -227,6 +227,10 @@ A hosted operator service at `https://testnet.gaskiller.xyz` runs the whole pipe
 consumer: simulate the call, compute the diff, and have the operator quorum sign it. It returns a
 ready-to-sign `verifyAndUpdate` transaction, which **you** submit.
 
+These examples pin solidity-sdk v0.2.0, whose `verifyAndUpdate` takes seven arguments and rebuilds the
+digest itself. A consumer deployed from them needs an aggregator on v0.2.0 too: one still on v0.1.0
+returns the older eight-argument call, which the new contracts don't have.
+
 **The API contract is in the docs** — [Quickstart](https://gaskiller.xyz/docs/quickstart) for the
 submit/poll/settle flow, and the [API Reference](https://gaskiller.xyz/docs/api/tasks/submitTask) for
 every field, status code and error. Requests are authenticated with a per-client API key minted by the

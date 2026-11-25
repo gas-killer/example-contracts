@@ -32,9 +32,9 @@ abstract contract BenchmarkBase is Test {
 
     /// @notice Compute the correct `verifyAndUpdate` arguments for applying `storageUpdates` to `c`.
     /// @dev Handles the two classic traps:
-    ///       - transition-index off-by-one: `verifyAndUpdate` is itself `trackState`, so it
-    ///         increments the counter *before* its body checks `transitionIndex + 1 == count`.
-    ///         The correct `transitionIndex` is therefore the count read *now*, before the call.
+    ///       - transition-index off-by-one: settlement increments the transition counter *before*
+    ///         it checks `transitionIndex + 1 == count`. The correct `transitionIndex` is
+    ///         therefore the count read *now*, before the call.
     ///       - block staleness: `referenceBlockNumber` must be `< block.number` and within
     ///         `blockStaleMeasure` (300) blocks. `block.number - 1` always satisfies both for
     ///         `block.number >= 1`.

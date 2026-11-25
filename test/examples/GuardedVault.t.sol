@@ -284,6 +284,45 @@ contract GuardedVaultTest is VaultTestKit {
         A.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
     }
 
+    /// @notice Settlement rebuilds the digest from the submitted fields, so a signature over one
+    ///         settle's fields doesn't settle a different selector or diff. The mock registry stands
+    ///         in for the operators by accepting only the digest they signed.
+    function test_verifyAndUpdate_settlesOnlyTheSignedFields() public {
+        GuardedVaultExposed A = _newVault();
+        GuardedVaultExposed B = _newVault();
+        _seedEqual(A, 5, 1000);
+        _seedEqual(B, 5, 1000);
+        address[] memory users = new address[](2);
+        users[0] = _depositor(0);
+        users[1] = _depositor(1);
+        int256[] memory deltas = new int256[](2);
+        deltas[0] = -200;
+        deltas[1] = 200;
+        B.settle(users, deltas);
+        bytes memory diff = _buildSettleDiff(B, users);
+
+        if (block.number == 0) vm.roll(1);
+        uint256 ti = A.stateTransitionCount();
+        registry.expectDigest(A.getMessageHash(ti, GuardedVault.settle.selector, diff));
+        (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
+
+        // Another selector.
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.deposit.selector, s, rAddr, nonSigners);
+
+        // Another diff: one that writes only the first account.
+        address[] memory one = new address[](1);
+        one[0] = users[0];
+        bytes memory other = _buildSettleDiff(B, one);
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate(uint32(block.number - 1), other, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+
+        // The signed fields settle.
+        _verify(A, diff, GuardedVault.settle.selector);
+        assertEq(A.shares(_depositor(0)), 800);
+        assertEq(A.stateTransitionCount(), ti + 1);
+    }
+
     function _findSettledLog(Vm.Log[] memory logs) internal pure returns (Vm.Log memory) {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length >= 1 && logs[i].topics[0] == SETTLED_SIG) {

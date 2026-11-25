@@ -12,16 +12,23 @@ When an operator submits a storage diff, `GasKillerSDK.verifyAndUpdate` checks o
 1. the reference block is recent (`referenceBlockNumber < block.number` and within `blockStaleMeasure`,
    default 300 blocks);
 2. the transition index is the next one (`transitionIndex + 1 == stateTransitionCount()`);
-3. the message hash equals `sha256(transitionIndex, address(this), targetFunction, storageUpdates)`;
-4. **the `SchnorrStakeRegistry` accepts one aggregate Schnorr signature over that hash**: the reference
+3. it rebuilds the digest the operators signed from the submitted fields —
+   `sha256(abi.encode(transitionIndex, block.chainid, address(this), targetFunction, storageUpdates))`,
+   with `msg.value` appended when it is non-zero — so a signature covers exactly one transition, on one
+   chain, for one contract and function, and can't be replayed with different fields;
+4. **the `SchnorrStakeRegistry` accepts one aggregate Schnorr signature over that digest**: the reference
    block is at or after the registry's last operator-set change, the listed non-signers are registered
    operators, the remaining signers hold at least the registry's `thresholdNum / thresholdDen` share of
    total registered weight (fixed per registry deployment, e.g. 2/3), and the signature verifies against
    the aggregate key minus the non-signers' keys;
 
-…and then it applies the diff with raw `sstore` / `call` / `log`.
+…and then it applies the diff as `sstore` / `call` / `log` operations, under two limits the contract
+sets: the **storage guard** rejects any write into its protected slot ranges (the SDK's own state, such as
+the transition counter and configuration), and the **call policy** limits which calls the diff may make
+and how much ETH it may send.
 
-That is the **entire** check. In particular:
+Those limits bound *where* a signed diff can write and *what* it can call, not whether its values are
+right. That is the **entire** check. In particular:
 
 - **There is no on-chain re-execution** of your computation. The chain never recomputes the result to
   see if the operator's diff is correct.
