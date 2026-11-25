@@ -67,10 +67,10 @@ fixed regardless of how much compute the operators did. See [`SECURITY.md`](./SE
 
 | generations | naive on-chain | Gas Killer settlement | factor |
 |---|---|---|---|
-| 1 | 16.9M | ~400k | **42×** |
-| 2 | 33.6M (**> 30M block**) | ~400k | **84×** |
-| 8 | 134.1M | ~400k | **335×** |
-| 16 | 267.7M | ~400k | **669×** |
+| 1 | 16.9M | ~407k | **41×** |
+| 2 | 33.6M (**> 30M block**) | ~407k | **83×** |
+| 8 | 134.1M | ~407k | **329×** |
+| 16 | 267.7M | ~407k | **658×** |
 
 Settlement does not move at all across that range — the board is 16 words however much compute produced
 it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every time the work doubles**.
@@ -79,9 +79,9 @@ it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every
 
 | depositors | naive guard | Gas Killer settlement | factor |
 |---|---|---|---|
-| 1,000 | 4.7M | ~306k | 15.2× |
-| 3,000 | 14.0M | ~306k | 45.6× |
-| 8,000 | 37.2M (**> 30M block**) | ~306k | **122×** |
+| 1,000 | 4.7M | ~308k | 15.1× |
+| 3,000 | 14.0M | ~308k | 45.3× |
+| 8,000 | 37.2M (**> 30M block**) | ~308k | **121×** |
 
 **Quicksort + SortedOracle — the compute doesn't just shrink in the diff, it disappears from it:**
 
@@ -91,9 +91,9 @@ consumer's six-word commit:
 
 | observations | naive commit | Gas Killer settlement | factor |
 |---|---|---|---|
-| 250 | 1.5M | ~305k | 5× |
-| 1,000 | 6.4M | ~305k | 22× |
-| 5,000 | 36.1M (**> 30M block**) | ~305k | 124× |
+| 250 | 1.5M | ~308k | 5× |
+| 1,000 | 6.4M | ~308k | 21× |
+| 5,000 | 36.1M (**> 30M block**) | ~308k | 117× |
 
 The sharper number is about *input order*, not size. `Quicksort` uses a last-element pivot, so an
 already-ascending array degrades to O(N²) — and a steadily rising price feed produces exactly that. At
