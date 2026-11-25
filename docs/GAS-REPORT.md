@@ -18,7 +18,7 @@ That **224,827** is the number that used to be a 250,000-gas guess. It is fixed 
 much computation the operators did off-chain — which is the whole reason the economics work.
 
 > **These settlement figures were measured under the BLS SDK.** The SDK these examples now pin
-> (`solidity-sdk@8b57a74`) replaces BLS with a single aggregate Schnorr signature checked by a
+> (`solidity-sdk@1231ce7`, v0.2.0) replaces BLS with a single aggregate Schnorr signature checked by a
 > `SchnorrStakeRegistry`, which the SDK measures at ~17k gas cold at full participation. The verification
 > term below is therefore an over-estimate for the current SDK, and every "Gas Killer settlement" figure
 > and factor built on it is a conservative bound. The naive and apply-diff columns do not depend on the
@@ -27,7 +27,14 @@ much computation the operators did off-chain — which is the whole reason the e
 
 Naive figures come from `forge test --match-path 'test/**/*.bench.t.sol' -vv` (the `algo/` suites sit in a
 nested directory, so a single-level glob misses them); OnchainLife's diff-apply figure from
-`forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage), SDK `79d3716`.
+`forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage). Apply-diff figures are
+measured at SDK `1231ce7` with forge 1.5.1, as CI runs it. Since v0.2.0 they include the SDK's storage
+guard and call policy, which cost more the more slots a diff writes: about 1.8k gas fixed plus about 280
+per `STORE`, by the SDK's own measurement. Re-measuring the previous pin and this one under forge 1.5.1,
+that added 2,176 to GuardedVault's two-store apply, 3,433 to SortedOracle's six and 7,276 to
+OnchainLife's. The pre-v0.2.0 figures this report used to quote were taken with an earlier forge, so
+subtracting them from today's gives slightly larger differences. Other forge versions meter differently; take figures
+from the same version CI uses.
 **Read [Methodology & caveats](#methodology--caveats) before quoting any of them.**
 
 ---
@@ -55,15 +62,15 @@ generation counter plus one log. Compute explodes; the diff doesn't move. That g
 
 OnchainLife has not itself settled on-chain, so its settlement cost is *built up* from the measured
 pieces: real BLS verification (224,827) + tx base (21,000) + calldata (~20k) + its measured diff-apply
-(128,915) + the transition counter ≈ **~400,000 gas**.
+(136,410) + the transition counter ≈ **~407,000 gas**.
 
 | Generations | Naive on-chain | Gas Killer settlement | Saving | Factor |
 |---:|---:|---:|---:|---:|
-| 1  | 16,862,218  | ~400,000 | 16.5M  | **42×** |
-| 2  | 33,632,923  | ~400,000 | 33.2M  | **84×** |
-| 4  | 67,159,671  | ~400,000 | 66.8M  | **168×** |
-| 8  | 134,102,442 | ~400,000 | 133.7M | **335×** |
-| 16 | 267,694,767 | ~400,000 | 267.3M | **669×** |
+| 1  | 16,862,218  | ~407,000 | 16.5M  | **41×** |
+| 2  | 33,632,923  | ~407,000 | 33.2M  | **83×** |
+| 4  | 67,159,671  | ~407,000 | 66.8M  | **165×** |
+| 8  | 134,102,442 | ~407,000 | 133.7M | **329×** |
+| 16 | 267,694,767 | ~407,000 | 267.3M | **658×** |
 
 The settlement column is the point: it **does not move at all** as compute grows 16×. The board is 16
 words whether the operator ran one generation or sixteen, so settling 16 generations costs the same as
@@ -75,7 +82,7 @@ it *doubles every time you double the work*, without limit.
 ### The part that isn't about money
 
 At 2 generations the naive path stops being expensive and starts being **impossible** — it cannot fit in a
-block at any price. Gas Killer settles 16 generations for ~400k gas, comfortably inside one. The win isn't
+block at any price. Gas Killer settles 16 generations for ~407k gas, comfortably inside one. The win isn't
 "cheaper", it's "possible at all".
 
 ---
@@ -126,17 +133,19 @@ At 8,000 depositors — a settle moving 200 shares between two accounts:
 
 That settlement figure is not modelled — it is the gas a real `verifyAndUpdate` for this contract
 actually burned on Sepolia. A 2-account settle writes one more slot than the landed transaction did,
-so budget ~306,000; the tables below use that.
+and the v0.2.0 storage guard and call policy add 2,176 to applying it (measured: 15,624 to 17,800), so
+budget ~308,000; the
+tables below use that.
 
 Because the diff is always "two share slots + one log", the apply cost is **independent of depositor
 count**, while the naive cost scales linearly:
 
 | Depositors | Naive guard | Gas Killer settlement | Factor |
 |---:|---:|---:|---:|
-| 1,000 | 4,658,626 | ~306,000 | 15.2× |
-| 2,000 | 9,307,620 | ~306,000 | 30.4× |
-| 3,000 | 13,956,620 | ~306,000 | 45.6× |
-| 8,000 | 37,201,620 | ~306,000 | **121.6×** |
+| 1,000 | 4,658,626 | ~308,000 | 15.1× |
+| 2,000 | 9,307,620 | ~308,000 | 30.2× |
+| 3,000 | 13,956,620 | ~308,000 | 45.3× |
+| 8,000 | 37,201,620 | ~308,000 | **120.8×** |
 
 **Below ~66 depositors, do not use Gas Killer for this.** The ~300k settlement floor — nearly all of it
 signature verification — dominates, and a plain on-chain check is cheaper. The mechanism only starts to
@@ -227,43 +236,44 @@ already committed once, so its six words are overwrites rather than first-ever w
 
 | Observations | Naive commit | Apply diff | + 250k verify (est.) | Factor |
 |---:|---:|---:|---:|---:|
-| 250 | 1,504,581 | 41,288 | 291,288 | 5× |
-| 500 | 2,932,317 | 41,312 | 291,312 | 10× |
-| 1,000 | 6,426,141 | 41,337 | 291,337 | 22× |
-| 2,000 | 13,782,897 | 41,362 | 291,362 | 47× |
+| 250 | 1,504,514 | 44,939 | 294,939 | 5× |
+| 500 | 2,932,250 | 44,963 | 294,963 | 10× |
+| 1,000 | 6,426,074 | 44,988 | 294,988 | 22× |
+| 2,000 | 13,782,830 | 45,013 | 295,013 | 47× |
 | 4,000 | 29,284,997 | — | — | — |
-| 5,000 | 36,102,123 (**> 30M block**) | 41,286 | 291,286 | 124× |
+| 5,000 | 36,102,056 (**> 30M block**) | 44,937 | 294,937 | 122× |
 
 The 4,000-observation row is a naive-only measurement, included because it brackets the block limit from
-below; no apply was metered at that size.
+below; no apply was metered at that size. It was measured at an earlier SDK revision, which moves
+the naive figures by under 100 gas.
 
 And the same table for input order rather than size, at a fixed N=400:
 
 | Input order | Naive commit | Apply diff |
 |---|---:|---:|
-| random | 2,396,231 | 41,310 |
-| ascending | 34,923,914 (**> 30M block**) | 41,119 |
+| random | 2,396,164 | 44,961 |
+| ascending | 34,923,847 (**> 30M block**) | 44,770 |
 
 The apply column is the point. It does not move with N, and it does not move with how hard the sort
 was. `test_applyCostIsIdenticalAcrossN` pins the strong form of that claim: payloads built from a
-250-observation commit and a 2,000-observation commit apply for **41,119 gas each — identical to the
+250-observation commit and a 2,000-observation commit apply for **44,770 gas each — identical to the
 unit**, not merely similar. The encoded payload is 1,376 bytes in every case, because every argument
 in it is fixed-width.
 
 **Production settlement, derived.** SortedOracle has not settled on-chain, so — as with OnchainLife —
 its figure is built from measured parts: real BLS verification (224,827) + tx base (21,000) + calldata
 for the 1,376-byte payload and `verifyAndUpdate`'s other arguments (~12,000) + the measured
-production-shaped apply (41,119) + the transition counter (~5,000) ≈ **~305,000 gas**.
+production-shaped apply (44,770) + the transition counter (~5,000) ≈ **~308,000 gas**.
 
 On "six words": that is the *consumer's* contribution to the diff, and it is what the payload carries. The
 settlement transaction writes one slot more — the SDK's own `trackState` transition counter, in its
 ERC-7201 namespace — which is why the derivation above has a separate line for it.
 
-A never-committed oracle pays more for its *first* settlement — 144,021 to apply instead of 41,119 —
+A never-committed oracle pays more for its *first* settlement — 147,672 to apply instead of 44,770 —
 because each of the six words takes the zero-to-non-zero `SSTORE` path once. Steady state is the figure
 above.
 
-**Where the crossover is.** Measured against that ~305,000 floor, a plain on-chain commit is cheaper up
+**Where the crossover is.** Measured against that ~308,000 floor, a plain on-chain commit is cheaper up
 to about **30 observations** (N=25 costs 289,702; N=50 costs 403,311). Above that the advantage grows
 superlinearly, because the naive side is superlinear and the settlement side is flat. This is a much
 earlier crossover than GuardedVault's ~66 depositors, for exactly that reason.
@@ -272,7 +282,7 @@ earlier crossover than GuardedVault's ~66 depositors, for exactly that reason.
 
 At N=400 with ordered input, and at N=5,000 with random input, the naive path stops being expensive and
 becomes impossible — it cannot fit in a block at any gas price. More pointedly, the *first* of those is
-reachable by ordinary well-behaved data. Gas Killer settles either one for ~305,000 gas, and the
+reachable by ordinary well-behaved data. Gas Killer settles either one for ~308,000 gas, and the
 algorithm's worst case becomes something the operator set schedules around rather than something an
 attacker exploits.
 
@@ -340,13 +350,13 @@ Stated plainly, because the headline numbers depend on them.
    an aggregate Schnorr signature instead (see the note at the top).
 2. **One contract's settlement is real; the other's is derived.** GuardedVault's 300,944 is an actual
    on-chain transaction. OnchainLife never settled on-chain (its 16.8M-gas simulation exceeded what the
-   operator's tracer could handle at the time), so its ~400,000 is built from measured parts and is
+   operator's tracer could handle at the time), so its ~407,000 is built from measured parts and is
    labelled as such wherever it appears. The Solidity tests themselves use a mock stake registry.
 3. **Storage pricing — read this one carefully.** Under EIP-2200/2929 a slot whose value was zero at the
    *start of the transaction* is a "dirty" slot and costs 100 gas to write, versus 5,000 for overwriting a
    committed non-zero word. The OnchainLife and GuardedVault `.bench.t.sol` suites deploy the apply target
-   inside the transaction they measure, which takes that discount and **understates apply cost by 2.8×** (OnchainLife: 45,915 measured
-   in-transaction vs **128,915** production-shaped). The apply/Gas Killer/Saving/Factor figures quoted
+   inside the transaction they measure, which takes that discount and **understates apply cost by 2.6×** (OnchainLife: 53,410 measured
+   in-transaction vs **136,410** production-shaped). The apply/Gas Killer/Saving/Factor figures quoted
    above are the **production-shaped** ones, measured against a target deployed in a prior transaction —
    see `test/ColdApplyMeasure.t.sol`, which pins both numbers side by side. The naive columns come from
    `setUp`-seeded (cold) vaults; the in-transaction warm sweep in `GuardedVault.bench.t.sol` is labelled a
@@ -361,7 +371,7 @@ Stated plainly, because the headline numbers depend on them.
 6. **Two apply measurements taken in sequence differ by a couple of hundred gas.** Every external call in
    a transaction allocates fresh memory to encode its calldata, so successive `gasleft()`-delta
    measurements carry allocation noise in either direction. It does not scale with N — with both payloads
-   built before either is applied, a 250-observation diff and a 2,000-observation diff cost **41,119 gas
+   built before either is applied, a 250-observation diff and a 2,000-observation diff cost **44,770 gas
    each, identical to the unit** (`test_applyCostIsIdenticalAcrossN`). Where this report quotes a flat
    apply cost, that test is the claim; the sweep tables show the noise.
 7. **The above-block-limit rows need a simulation profile that is not the default.** Any figure here

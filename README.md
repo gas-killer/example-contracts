@@ -4,8 +4,8 @@ Example [Foundry](https://book.getfoundry.sh) contracts that show off the **Gas 
 EigenLayer AVS where operators run an expensive *state-changing* computation **off-chain**, sign the
 resulting storage diff with one aggregate Schnorr signature, and submit it through `verifyAndUpdate`,
 which checks that signature against a `SchnorrStakeRegistry` (the signers must hold the registry's
-stake threshold, e.g. 2/3 of registered weight) and then applies the diff with raw `sstore` / `call` /
-`log`. The on-chain cost is signature verification + applying the diff — **not** the computation.
+stake threshold, e.g. 2/3 of registered weight) and then applies the diff as `sstore` / `call` / `log`
+operations under the SDK's storage guard and call policy (see [SECURITY.md](./SECURITY.md)). The on-chain cost is signature verification + applying the diff — **not** the computation.
 
 The pitch: **write the dumb, brute-force, gas-explosive contract you'd never normally ship**, and let
 operators do the heavy lifting off-chain.
@@ -67,10 +67,10 @@ fixed regardless of how much compute the operators did. See [`SECURITY.md`](./SE
 
 | generations | naive on-chain | Gas Killer settlement | factor |
 |---|---|---|---|
-| 1 | 16.9M | ~400k | **42×** |
-| 2 | 33.6M (**> 30M block**) | ~400k | **84×** |
-| 8 | 134.1M | ~400k | **335×** |
-| 16 | 267.7M | ~400k | **669×** |
+| 1 | 16.9M | ~407k | **41×** |
+| 2 | 33.6M (**> 30M block**) | ~407k | **83×** |
+| 8 | 134.1M | ~407k | **329×** |
+| 16 | 267.7M | ~407k | **658×** |
 
 Settlement does not move at all across that range — the board is 16 words however much compute produced
 it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every time the work doubles**.
@@ -79,9 +79,9 @@ it. Naive grows without bound, Gas Killer is flat, so the factor **doubles every
 
 | depositors | naive guard | Gas Killer settlement | factor |
 |---|---|---|---|
-| 1,000 | 4.7M | ~306k | 15.2× |
-| 3,000 | 14.0M | ~306k | 45.6× |
-| 8,000 | 37.2M (**> 30M block**) | ~306k | **122×** |
+| 1,000 | 4.7M | ~308k | 15.1× |
+| 3,000 | 14.0M | ~308k | 45.3× |
+| 8,000 | 37.2M (**> 30M block**) | ~308k | **121×** |
 
 **Quicksort + SortedOracle — the compute doesn't just shrink in the diff, it disappears from it:**
 
@@ -91,9 +91,13 @@ consumer's six-word commit:
 
 | observations | naive commit | Gas Killer settlement | factor |
 |---|---|---|---|
-| 250 | 1.5M | ~305k | 5× |
-| 1,000 | 6.4M | ~305k | 22× |
-| 5,000 | 36.1M (**> 30M block**) | ~305k | 124× |
+| 250 | 1.5M | ~308k | 5× |
+| 1,000 | 6.4M | ~308k | 22× |
+| 5,000 | 36.1M (**> 30M block**) | ~308k | 122× |
+
+These factors match the sweep in [`docs/GAS-REPORT.md`](./docs/GAS-REPORT.md), which divides by the
+apply plus the 250k verification constant (~295k). Against the ~308k derived settlement they are about
+4% lower.
 
 The sharper number is about *input order*, not size. `Quicksort` uses a last-element pivot, so an
 already-ascending array degrades to O(N²) — and a steadily rising price feed produces exactly that. At
@@ -168,7 +172,7 @@ bytes memory diff = OffchainPayloadBuilder.store(
     OffchainPayloadBuilder.simpleSlot(0),   // slot of `result`
     bytes32(computedResult)
 );
-// → verifyAndUpdate(msgHash, refBlock, diff, transitionIndex, selector, s, Raddr, nonSigners)
+// → verifyAndUpdate(refBlock, diff, transitionIndex, selector, s, Raddr, nonSigners)
 ```
 
 Every test proves **equivalence**: running the naive function and applying the operator's diff produce
@@ -226,6 +230,10 @@ forge script script/DeployGuardedVault.s.sol --rpc-url $SEPOLIA_RPC_URL --privat
 A hosted operator service at `https://testnet.gaskiller.xyz` runs the whole pipeline for a deployed
 consumer: simulate the call, compute the diff, and have the operator quorum sign it. It returns a
 ready-to-sign `verifyAndUpdate` transaction, which **you** submit.
+
+These examples pin solidity-sdk v0.2.0, whose `verifyAndUpdate` takes seven arguments and rebuilds the
+digest itself. A consumer deployed from them needs an aggregator on v0.2.0 too: one still on v0.1.0
+returns the older eight-argument call, which the new contracts don't have.
 
 **The API contract is in the docs** — [Quickstart](https://gaskiller.xyz/docs/quickstart) for the
 submit/poll/settle flow, and the [API Reference](https://gaskiller.xyz/docs/api/tasks/submitTask) for

@@ -12,16 +12,29 @@ When an operator submits a storage diff, `GasKillerSDK.verifyAndUpdate` checks o
 1. the reference block is recent (`referenceBlockNumber < block.number` and within `blockStaleMeasure`,
    default 300 blocks);
 2. the transition index is the next one (`transitionIndex + 1 == stateTransitionCount()`);
-3. the message hash equals `sha256(transitionIndex, address(this), targetFunction, storageUpdates)`;
-4. **the `SchnorrStakeRegistry` accepts one aggregate Schnorr signature over that hash**: the reference
+3. it rebuilds the digest the operators signed from the submitted fields —
+   `sha256(abi.encode(transitionIndex, block.chainid, address(this), targetFunction, storageUpdates))`,
+   with `msg.value` appended when it is non-zero — so a signature covers exactly one transition, on one
+   chain, for one contract and function, and can't be replayed with different fields;
+4. **the `SchnorrStakeRegistry` accepts one aggregate Schnorr signature over that digest**: the reference
    block is at or after the registry's last operator-set change, the listed non-signers are registered
    operators, the remaining signers hold at least the registry's `thresholdNum / thresholdDen` share of
    total registered weight (fixed per registry deployment, e.g. 2/3), and the signature verifies against
    the aggregate key minus the non-signers' keys;
 
-…and then it applies the diff with raw `sstore` / `call` / `log`.
+…and then it applies the diff as `sstore` / `call` / `log` operations, under two limits the contract
+sets:
 
-That is the **entire** check. In particular:
+- the **storage guard** rejects any write that would change a protected bit. By default that covers only
+  the SDK's own state, such as its configuration and the transition counter, which a write may move
+  forward but never back. A consumer adds its own slots by overriding
+  `_protectedRanges`;
+- the **call policy** decides which calls the diff may make and how much ETH it may send. By default it
+  blocks only calls back into the contract itself: any other call is allowed, with no ETH cap. A consumer
+  gets real limits by overriding `_authorizeCall` and `_maxOutgoingValue`. None of these examples does.
+
+Those limits bound *where* a signed diff can write and *what* it can call, not whether its values are
+right. That is the **entire** check. In particular:
 
 - **There is no on-chain re-execution** of your computation. The chain never recomputes the result to
   see if the operator's diff is correct.
@@ -85,7 +98,8 @@ These examples deliberately cover both:
 
 - **Cost-collapse (compute ≫ diff).** `OnchainLife` steps a 64×64 Game of Life board. One generation
   already costs ~17M gas on-chain and two exceed a 30M block, yet the resulting diff is at most 16
-  changed words — so the apply cost is **flat (~46k) whether the operator stepped 1 generation or 8**.
+  changed words — so the apply cost is **flat (~136k, or ~53k measured in-transaction) whether the
+  operator stepped 1 generation or 8**.
   This is where Gas Killer shines.
 
 - **Trust-only, unbounded.** Because nothing on-chain re-checks the result, an operator can submit the
@@ -134,7 +148,7 @@ These examples deliberately cover both:
 ## Marketing vs. code
 
 Gas Killer's landing page advertises "objective on-chain slashing" and "infinite computation? no
-problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@42fde57`), the code backs
+problem!". As of the SDK revision these examples pin (`gas-killer/solidity-sdk@1231ce7`), the code backs
 **neither**: there is no on-chain slashing or fraud proof, and the default simulation profile
 (`GK_SIM_PROFILE=chain`) stays within a block's gas. A `1 << 40`-gas profile exists but is opt-in, still
 bounded by what a *payload* can carry, and explicitly not production-ready — see the profile note above.

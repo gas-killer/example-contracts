@@ -9,8 +9,10 @@ import {ISchnorrStakeRegistry} from "gas-killer-sdk/interface/ISchnorrStakeRegis
 ///         registry's stake-threshold rule, so tests can drive both the `verifyAndUpdate` happy path
 ///         and its below-threshold failure (`GasKillerSDK.InvalidQuorumSignature`) without an
 ///         operator set or secp256k1 keys.
-/// @dev `GasKillerSDK` calls only `isValidSignature`, and only its boolean result reaches the SDK,
-///      so the message, signature and non-signer arguments are ignored here. DO NOT use apply-diff gas
+/// @dev `GasKillerSDK` calls only `isValidSignature`, and only its boolean result reaches the SDK.
+///      The signature and non-signer arguments are ignored here, and so is the message unless a test
+///      stages the digest it expects with `expectDigest`: settlement rebuilds the digest from the
+///      submitted fields, so that is the only check that they match what was signed. DO NOT use apply-diff gas
 ///      measured against this mock as a production figure: it omits the fixed, N-independent cost of
 ///      real aggregate Schnorr verification.
 contract MockSchnorrStakeRegistry is ISchnorrStakeRegistry {
@@ -24,6 +26,14 @@ contract MockSchnorrStakeRegistry is ISchnorrStakeRegistry {
     /// @notice Weight reported as having signed. Defaults to full participation (always passes).
     uint256 public signedWeight = TOTAL_WEIGHT;
 
+    /// @notice The digest a signature must be over, or zero to accept any.
+    bytes32 public expectedDigest;
+
+    /// @notice Accept only signatures over `digest`, as if the operators had signed exactly that.
+    function expectDigest(bytes32 digest) external {
+        expectedDigest = digest;
+    }
+
     /// @notice Configure the reported signed weight to drive pass/fail paths.
     function setSignedWeight(uint256 w) external {
         signedWeight = w;
@@ -35,7 +45,12 @@ contract MockSchnorrStakeRegistry is ISchnorrStakeRegistry {
     }
 
     /// @inheritdoc ISchnorrStakeRegistry
-    function isValidSignature(bytes32, uint256, address, address[] calldata, uint256) external view returns (bool) {
+    function isValidSignature(bytes32 message, uint256, address, address[] calldata, uint256)
+        external
+        view
+        returns (bool)
+    {
+        if (expectedDigest != bytes32(0) && message != expectedDigest) return false;
         // Same inclusive rule as SchnorrStakeRegistry: signed/total >= num/den.
         return signedWeight * THRESHOLD_DEN >= TOTAL_WEIGHT * THRESHOLD_NUM;
     }

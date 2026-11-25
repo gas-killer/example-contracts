@@ -9,6 +9,7 @@ import {MockSchnorrStakeRegistry} from "../mocks/MockSchnorrStakeRegistry.sol";
 import {OffchainPayloadBuilder} from "../helpers/OffchainPayloadBuilder.sol";
 import {StateUpdateType} from "gas-killer-sdk/StateChangeHandlerLib.sol";
 import {GasKillerSDK} from "gas-killer-sdk/GasKillerSDK.sol";
+import {StorageGuard} from "gas-killer-sdk/libraries/StorageGuard.sol";
 
 /// @notice Shared fixtures + helpers for the GuardedVault unit tests and benchmarks.
 abstract contract VaultTestKit is BenchmarkBase {
@@ -279,10 +280,119 @@ contract GuardedVaultTest is VaultTestKit {
         registry.setSignedWeight(registry.thresholdWeight() - 1);
         if (block.number == 0) vm.roll(1);
         uint256 ti = A.stateTransitionCount();
-        bytes32 h = A.getMessageHash(ti, GuardedVault.settle.selector, diff);
         (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
         vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
-        A.verifyAndUpdate(h, uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+        A.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+    }
+
+    /// @notice Settlement rebuilds the digest from the submitted fields, so a signature over one
+    ///         settle's fields doesn't settle a different selector, diff, contract, chain or value.
+    ///         The mock registry stands in for the operators by accepting only the digest they
+    ///         signed. (The transition index is bound too, but any other index fails the counter
+    ///         check before the signature is read.)
+    function test_verifyAndUpdate_settlesOnlyTheSignedFields() public {
+        GuardedVaultExposed A = _newVault();
+        GuardedVaultExposed B = _newVault();
+        GuardedVaultExposed C = _newVault();
+        _seedEqual(A, 5, 1000);
+        _seedEqual(B, 5, 1000);
+        _seedEqual(C, 5, 1000);
+        address[] memory users = new address[](2);
+        users[0] = _depositor(0);
+        users[1] = _depositor(1);
+        int256[] memory deltas = new int256[](2);
+        deltas[0] = -200;
+        deltas[1] = 200;
+        B.settle(users, deltas);
+        bytes memory diff = _buildSettleDiff(B, users);
+
+        if (block.number == 0) vm.roll(1);
+        uint256 ti = A.stateTransitionCount();
+        registry.expectDigest(A.getMessageHash(ti, GuardedVault.settle.selector, diff));
+        (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
+
+        // Another selector.
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.deposit.selector, s, rAddr, nonSigners);
+
+        // Another diff: one that writes only the first account.
+        address[] memory one = new address[](1);
+        one[0] = users[0];
+        bytes memory other = _buildSettleDiff(B, one);
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate(uint32(block.number - 1), other, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+
+        // Another contract in the same state.
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        C.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+
+        // Another chain.
+        uint256 chainId = block.chainid;
+        vm.chainId(chainId + 1);
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate(uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners);
+        vm.chainId(chainId);
+
+        // ETH sent with a transition signed as zero-value.
+        vm.deal(address(this), 1);
+        vm.expectRevert(GasKillerSDK.InvalidQuorumSignature.selector);
+        A.verifyAndUpdate{value: 1}(
+            uint32(block.number - 1), diff, ti, GuardedVault.settle.selector, s, rAddr, nonSigners
+        );
+
+        // The signed fields settle.
+        _verify(A, diff, GuardedVault.settle.selector);
+        assertEq(A.shares(_depositor(0)), 800);
+        assertEq(A.shares(_depositor(1)), 1200);
+        assertEq(A.stateTransitionCount(), ti + 1);
+    }
+
+    /// @notice `applyDiff` must apply a diff exactly as settlement does, since the operator's
+    ///         pre-sign check and the apply gas figures both run through it: the same post-state
+    ///         and log for a valid diff, and the same storage-guard rejection for a protected write.
+    function test_applyDiff_matchesSettlement() public {
+        GuardedVaultExposed viaApply = _newVault();
+        GuardedVaultExposed viaSettle = _newVault();
+        GuardedVaultExposed spec = _newVault();
+        _seedEqual(viaApply, 5, 1000);
+        _seedEqual(viaSettle, 5, 1000);
+        _seedEqual(spec, 5, 1000);
+        address[] memory users = new address[](2);
+        users[0] = _depositor(0);
+        users[1] = _depositor(1);
+        int256[] memory deltas = new int256[](2);
+        deltas[0] = -200;
+        deltas[1] = 200;
+        spec.settle(users, deltas);
+        bytes memory diff = _buildSettleDiff(spec, users);
+
+        vm.recordLogs();
+        viaApply.applyDiff(diff);
+        Vm.Log[] memory applyLogs = vm.getRecordedLogs();
+        vm.recordLogs();
+        _verify(viaSettle, diff, GuardedVault.settle.selector);
+        Vm.Log[] memory settleLogs = vm.getRecordedLogs();
+
+        for (uint256 i = 0; i < 5; i++) {
+            bytes32 slot = OffchainPayloadBuilder.mappingSlot(_depositor(i), SHARES_SLOT);
+            assertEq(vm.load(address(viaApply), slot), vm.load(address(viaSettle), slot), "share slot mismatch");
+        }
+        assertEq(viaApply.totalShares(), viaSettle.totalShares());
+        assertEq(keccak256(_findSettledLog(applyLogs).data), keccak256(_findSettledLog(settleLogs).data));
+
+        // Moving the SDK's transition counter further than the guard allows is rejected both ways,
+        // with the same error.
+        bytes memory protectedWrite = OffchainPayloadBuilder.store(StorageGuard.COUNTER_SLOT, bytes32(uint256(1) << 40));
+        bytes memory rejection =
+            abi.encodeWithSelector(StorageGuard.ProtectedSlotWrite.selector, 0, StorageGuard.COUNTER_SLOT);
+        vm.expectRevert(rejection);
+        viaApply.applyDiff(protectedWrite);
+        (uint32 referenceBlockNumber, uint256 transitionIndex) = _prepVerify(viaSettle);
+        (uint256 s, address rAddr, address[] memory nonSigners) = _placeholderSignature();
+        vm.expectRevert(rejection);
+        viaSettle.verifyAndUpdate(
+            referenceBlockNumber, protectedWrite, transitionIndex, GuardedVault.settle.selector, s, rAddr, nonSigners
+        );
     }
 
     function _findSettledLog(Vm.Log[] memory logs) internal pure returns (Vm.Log memory) {
