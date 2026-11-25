@@ -23,9 +23,15 @@ When an operator submits a storage diff, `GasKillerSDK.verifyAndUpdate` checks o
    the aggregate key minus the non-signers' keys;
 
 …and then it applies the diff as `sstore` / `call` / `log` operations, under two limits the contract
-sets: the **storage guard** rejects any write into its protected slot ranges (the SDK's own state, such as
-the transition counter and configuration), and the **call policy** limits which calls the diff may make
-and how much ETH it may send.
+sets:
+
+- the **storage guard** rejects any write that would change a protected bit. By default that covers only
+  the SDK's own state, such as its configuration and the transition counter, which a write may move
+  forward but never back. A consumer adds its own slots by overriding
+  `_protectedRanges`;
+- the **call policy** decides which calls the diff may make and how much ETH it may send. By default it
+  blocks only calls back into the contract itself: any other call is allowed, with no ETH cap. A consumer
+  gets real limits by overriding `_authorizeCall` and `_maxOutgoingValue`. None of these examples does.
 
 Those limits bound *where* a signed diff can write and *what* it can call, not whether its values are
 right. That is the **entire** check. In particular:

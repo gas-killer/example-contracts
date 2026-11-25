@@ -29,8 +29,10 @@ Naive figures come from `forge test --match-path 'test/**/*.bench.t.sol' -vv` (t
 nested directory, so a single-level glob misses them); OnchainLife's diff-apply figure from
 `forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage). Apply-diff figures are
 measured at SDK `1231ce7` with forge 1.5.1, as CI runs it. Since v0.2.0 they include the SDK's storage
-guard and call policy, about 2.2k gas per settlement more than the unguarded apply measured earlier.
-Other forge versions meter differently; take figures from the same version CI uses.
+guard and call policy, which cost more the more slots a diff writes: about 1.8k gas fixed plus about 280
+per `STORE`, by the SDK's own measurement. Against the previous pin under the same forge, that added
+2,176 to GuardedVault's two-store apply, 3,433 to SortedOracle's six and 7,276 to OnchainLife's. Other forge versions meter differently; take figures
+from the same version CI uses.
 **Read [Methodology & caveats](#methodology--caveats) before quoting any of them.**
 
 ---
@@ -129,7 +131,8 @@ At 8,000 depositors — a settle moving 200 shares between two accounts:
 
 That settlement figure is not modelled — it is the gas a real `verifyAndUpdate` for this contract
 actually burned on Sepolia. A 2-account settle writes one more slot than the landed transaction did,
-and the v0.2.0 storage guard and call policy add about 2.2k to applying it, so budget ~308,000; the
+and the v0.2.0 storage guard and call policy add 2,176 to applying it (measured: 15,624 to 17,800), so
+budget ~308,000; the
 tables below use that.
 
 Because the diff is always "two share slots + one log", the apply cost is **independent of depositor

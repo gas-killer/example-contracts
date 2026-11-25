@@ -320,6 +320,7 @@ contract GuardedVaultTest is VaultTestKit {
         // The signed fields settle.
         _verify(A, diff, GuardedVault.settle.selector);
         assertEq(A.shares(_depositor(0)), 800);
+        assertEq(A.shares(_depositor(1)), 1200);
         assertEq(A.stateTransitionCount(), ti + 1);
     }
 
