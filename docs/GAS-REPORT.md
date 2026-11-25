@@ -30,8 +30,10 @@ nested directory, so a single-level glob misses them); OnchainLife's diff-apply 
 `forge test --match-contract ColdApplyMeasure -vv` (production-shaped storage). Apply-diff figures are
 measured at SDK `1231ce7` with forge 1.5.1, as CI runs it. Since v0.2.0 they include the SDK's storage
 guard and call policy, which cost more the more slots a diff writes: about 1.8k gas fixed plus about 280
-per `STORE`, by the SDK's own measurement. Against the previous pin under the same forge, that added
-2,176 to GuardedVault's two-store apply, 3,433 to SortedOracle's six and 7,276 to OnchainLife's. Other forge versions meter differently; take figures
+per `STORE`, by the SDK's own measurement. Re-measuring the previous pin and this one under forge 1.5.1,
+that added 2,176 to GuardedVault's two-store apply, 3,433 to SortedOracle's six and 7,276 to
+OnchainLife's. The pre-v0.2.0 figures this report used to quote were taken with an earlier forge, so
+subtracting them from today's gives slightly larger differences. Other forge versions meter differently; take figures
 from the same version CI uses.
 **Read [Methodology & caveats](#methodology--caveats) before quoting any of them.**
 

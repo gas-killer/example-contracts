@@ -4,8 +4,8 @@ Example [Foundry](https://book.getfoundry.sh) contracts that show off the **Gas 
 EigenLayer AVS where operators run an expensive *state-changing* computation **off-chain**, sign the
 resulting storage diff with one aggregate Schnorr signature, and submit it through `verifyAndUpdate`,
 which checks that signature against a `SchnorrStakeRegistry` (the signers must hold the registry's
-stake threshold, e.g. 2/3 of registered weight) and then applies the diff with raw `sstore` / `call` /
-`log`. The on-chain cost is signature verification + applying the diff — **not** the computation.
+stake threshold, e.g. 2/3 of registered weight) and then applies the diff as `sstore` / `call` / `log`
+operations under the SDK's storage guard and call policy (see [SECURITY.md](./SECURITY.md)). The on-chain cost is signature verification + applying the diff — **not** the computation.
 
 The pitch: **write the dumb, brute-force, gas-explosive contract you'd never normally ship**, and let
 operators do the heavy lifting off-chain.
@@ -92,8 +92,12 @@ consumer's six-word commit:
 | observations | naive commit | Gas Killer settlement | factor |
 |---|---|---|---|
 | 250 | 1.5M | ~308k | 5× |
-| 1,000 | 6.4M | ~308k | 21× |
-| 5,000 | 36.1M (**> 30M block**) | ~308k | 117× |
+| 1,000 | 6.4M | ~308k | 22× |
+| 5,000 | 36.1M (**> 30M block**) | ~308k | 122× |
+
+These factors match the sweep in [`docs/GAS-REPORT.md`](./docs/GAS-REPORT.md), which divides by the
+apply plus the 250k verification constant (~295k). Against the ~308k derived settlement they are about
+4% lower.
 
 The sharper number is about *input order*, not size. `Quicksort` uses a last-element pivot, so an
 already-ascending array degrades to O(N²) — and a steadily rising price feed produces exactly that. At

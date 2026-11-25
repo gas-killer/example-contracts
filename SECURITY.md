@@ -98,7 +98,8 @@ These examples deliberately cover both:
 
 - **Cost-collapse (compute ≫ diff).** `OnchainLife` steps a 64×64 Game of Life board. One generation
   already costs ~17M gas on-chain and two exceed a 30M block, yet the resulting diff is at most 16
-  changed words — so the apply cost is **flat (~46k) whether the operator stepped 1 generation or 8**.
+  changed words — so the apply cost is **flat (~136k, or ~53k measured in-transaction) whether the
+  operator stepped 1 generation or 8**.
   This is where Gas Killer shines.
 
 - **Trust-only, unbounded.** Because nothing on-chain re-checks the result, an operator can submit the
